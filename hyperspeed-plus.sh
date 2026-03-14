@@ -6,10 +6,11 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
+BLUE='\033[0;34m'
 ENDC='\033[0m'
 
 SCRIPT_NAME='HyperSpeed Plus'
-SCRIPT_VERSION='1.0.0'
+SCRIPT_VERSION='2.0.0'
 BASE_DIR="${HOME}/.hyperspeed-plus"
 LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
@@ -18,46 +19,17 @@ THREAD_FLAG=''
 
 mkdir -p "$LOG_DIR" "$WORK_DIR"
 
+# 仅保留你本次测试中可用或部分可用的节点：
+# 1) 上传下载都正常
+# 2) 教育网IPv4 中上传正常但下载断流的节点保留，供观察特殊线路表现
 NODES=(
 '电信|上海|电信||aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQK|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkCg=='
 '电信|江苏镇江5G|电信||aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvZG93bmxvYWQ=|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvdXBsb2Fk'
 '电信|江苏南京5G|电信||aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL3VwbG9hZAo='
-'电信|安徽合肥5G|电信||aHR0cDovL3NwZWVkdGVzdDEuYWgxNjMuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEuYWgxNjMuY29tOjgwODAvdXBsb2Fk'
-'电信|天津5G|电信||aHR0cDovL3N5LnRqdGVsZS5jb206ODA4MC9kb3dubG9hZA==|aHR0cDovL3N5LnRqdGVsZS5jb206ODA4MC91cGxvYWQ='
-'电信|天津|电信||aHR0cDovL3RqcmF0ZS50anRlbGUuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL3RqcmF0ZS50anRlbGUuY29tOjgwODAvdXBsb2Fk'
-'电信|四川成都|电信||aHR0cDovL3NwZWVkdGVzdDEuc2MuMTg5LmNuOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEuc2MuMTg5LmNuOjgwODAvdXBsb2Fk'
-'电信|甘肃兰州|电信||aHR0cDovL3NwZWVkLmJhamlhbmp1bi5jb206ODA4MC9kb3dubG9hZA==|aHR0cDovL3NwZWVkLmJhamlhbmp1bi5jb206ODA4MC91cGxvYWQ='
-
-'联通|上海5G|联通||aHR0cDovLzVnLnNodW5pY29tdGVzdC5jb206ODA4MC9kb3dubG9hZAo=|aHR0cDovLzVnLnNodW5pY29tdGVzdC5jb206ODA4MC91cGxvYWQK'
-'联通|江苏无锡|联通||aHR0cHM6Ly9zcGVlZHRlc3QyLm5pdXRrLmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cHM6Ly9zcGVlZHRlc3QyLm5pdXRrLmNvbTo4MDgwL3VwbG9hZA=='
-'联通|江西南昌|联通||aHR0cDovL3NwZWVkdGVzdC5qeHVuaWNvbS5jb206ODA4MC9kb3dubG9hZA==|aHR0cDovL3NwZWVkdGVzdC5qeHVuaWNvbS5jb206ODA4MC91cGxvYWQ='
-'联通|河南郑州5G|联通||aHR0cDovLzVndGVzdC5zaGFuZ2R1LmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovLzVndGVzdC5zaGFuZ2R1LmNvbTo4MDgwL3VwbG9hZA=='
-'联通|湖南长沙5G|联通||aHR0cDovL3NwZWVkdGVzdDAxLmhuMTY1LmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovL3NwZWVkdGVzdDAxLmhuMTY1LmNvbTo4MDgwL3VwbG9hZA=='
-'联通|辽宁沈阳|联通||aHR0cDovL3VuaWNvbXNwZWVkdGVzdC5jb206ODA4MC9kb3dubG9hZAo=|aHR0cDovL3VuaWNvbXNwZWVkdGVzdC5jb206ODA4MC91cGxvYWQK'
-'联通|福建福州|联通||aHR0cDovL3VwbG9hZDEudGVzdHNwZWVkLmNkbjE2LmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovL3VwbG9hZDEudGVzdHNwZWVkLmNkbjE2LmNvbTo4MDgwL3VwbG9hZA=='
-
-'移动|北京|移动||aHR0cDovLzIxMS4xMzYuMzAuMTE0OjkwMDAvc3BlZWQvMjAwMDAwMC5kYXRhCg==|aHR0cDovLzIxMS4xMzYuMzAuMTE0OjkwMDAvc3BlZWQvMjAwMDAwLmRhdGEK'
-'移动|浙江杭州5G|移动||aHR0cDovL3NwZWVkdGVzdC4xMzlwbGF5LmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovL3NwZWVkdGVzdC4xMzlwbGF5LmNvbTo4MDgwL3VwbG9hZA=='
-'移动|陕西西安5G|移动||aHR0cDovL3NwZWVkdGVzdC5vbmUtcHVuY2gud2luOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdC5vbmUtcHVuY2gud2luOjgwODAvdXBsb2Fk'
-'移动|四川成都|移动||aHR0cDovL3NwZWVkdGVzdDEuc2MuY2hpbmFtb2JpbGUuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEuc2MuY2hpbmFtb2JpbGUuY29tOjgwODAvdXBsb2Fk'
-'移动|甘肃兰州|移动||aHR0cDovL3NwZWVkdGVzdDEuZ3MuY2hpbmFtb2JpbGUuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEuZ3MuY2hpbmFtb2JpbGUuY29tOjgwODAvdXBsb2Fk'
-
-'教育网IPv4|中国科技大学|合肥||aHR0cHM6Ly90ZXN0LnVzdGMuZWR1LmNuL2JhY2tlbmQvZ2FyYmFnZS5waHAK|aHR0cHM6Ly90ZXN0LnVzdGMuZWR1LmNuL2JhY2tlbmQvZW1wdHkucGhwCg=='
 '教育网IPv4|东北大学|沈阳||aHR0cHM6Ly9pcHR2LnRzaW5naHVhLmVkdS5jbi9zdC9nYXJiYWdlLnBocAo=|aHR0cHM6Ly9pcHR2LnRzaW5naHVhLmVkdS5jbi9zdC9lbXB0eS5waHAK'
 '教育网IPv4|上海交通大学|上海||aHR0cHM6Ly93c3VzLnNqdHUuZWR1LmNuL3NwZWVkdGVzdC9iYWNrZW5kL2dhcmJhZ2UucGhwCg==|aHR0cHM6Ly93c3VzLnNqdHUuZWR1LmNuL3NwZWVkdGVzdC9iYWNrZW5kL2VtcHR5LnBocAo='
-
-'教育网IPv6|中国科技大学|合肥|-6|aHR0cHM6Ly90ZXN0Ni51c3RjLmVkdS5jbi9iYWNrZW5kL2dhcmJhZ2UucGhwCg==|aHR0cHM6Ly90ZXN0Ni51c3RjLmVkdS5jbi9iYWNrZW5kL2VtcHR5LnBocAo='
-'教育网IPv6|东北大学|沈阳|-6|aHR0cHM6Ly9pcHR2LnRzaW5naHVhLmVkdS5jbi9zdC9nYXJiYWdlLnBocAo=|aHR0cHM6Ly9pcHR2LnRzaW5naHVhLmVkdS5jbi9zdC9lbXB0eS5waHAK'
-'教育网IPv6|上海交通大学|上海|-6|aHR0cHM6Ly93c3VzLnNqdHUuZWR1LmNuL3NwZWVkdGVzdC9iYWNrZW5kL2dhcmJhZ2UucGhwCg==|aHR0cHM6Ly93c3VzLnNqdHUuZWR1LmNuL3NwZWVkdGVzdC9iYWNrZW5kL2VtcHR5LnBocAo='
-
-'三网IPv6|甘肃兰州|电信|-6|aHR0cDovL3NwZWVkLmJhamlhbmp1bi5jb206ODA4MC9kb3dubG9hZA==|aHR0cDovL3NwZWVkLmJhamlhbmp1bi5jb206ODA4MC91cGxvYWQ='
-'三网IPv6|上海5G|联通|-6|aHR0cDovLzVnLnNodW5pY29tdGVzdC5jb206ODA4MC9kb3dubG9hZAo=|aHR0cDovLzVnLnNodW5pY29tdGVzdC5jb206ODA4MC91cGxvYWQK'
-
 '港澳台日韩|环电宽频|香港||aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL3VwbG9hZAo='
-'港澳台日韩|澳门电讯|澳门||aHR0cDovL3NwZWVkdGVzdDUubWFjYXUuY3RtLm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL3NwZWVkdGVzdDUubWFjYXUuY3RtLm5ldDo4MDgwL3VwbG9hZAo='
 '港澳台日韩|中华电信|台北||aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL3VwbG9hZAo='
-'港澳台日韩|乐天移动|东京||aHR0cDovL29va2xhLm1ic3BlZWQubmV0OjgwODAvZG93bmxvYWQK|aHR0cDovL29va2xhLm1ic3BlZWQubmV0OjgwODAvdXBsb2FkCg=='
-'港澳台日韩|Kdatacenter|首尔||aHR0cDovL3NwZWVkdGVzdC5rZGF0YWNlbnRlci5jb206ODA4MC9kb3dubG9hZAo=|aHR0cDovL3NwZWVkdGVzdC5rZGF0YWNlbnRlci5jb206ODA4MC91cGxvYWQK'
 )
 
 command_exists() {
@@ -92,10 +64,14 @@ check_dependencies() {
     command_exists awk || missing+=(awk)
     command_exists sed || missing+=(sed)
     command_exists date || missing+=(date)
+    command_exists sort || missing+=(sort)
+    command_exists head || missing+=(head)
+    command_exists tail || missing+=(tail)
+    command_exists tr || missing+=(tr)
+    command_exists find || missing+=(find)
     if ! command_exists curl && ! command_exists wget; then
         missing+=(curl/wget)
     fi
-
     if [ ${#missing[@]} -gt 0 ]; then
         echo -e "${RED}缺少依赖: ${missing[*]}${ENDC}"
         exit 1
@@ -118,7 +94,7 @@ prepare_bimc() {
 print_banner() {
     clear
     echo "—————————————————————— ${SCRIPT_NAME} ${SCRIPT_VERSION} ——————————————————————"
-    echo "  长时压力测速 | 节点多选 | 日志查询 | CSV 记录"
+    echo "  长时压力测速 | 节点多选 | 日志查询 | 日志分析 | CSV 记录"
     echo "  日志目录: ${LOG_DIR}"
     echo "——————————————————————————————————————————————————————————————————————————————"
 }
@@ -141,7 +117,7 @@ show_nodes() {
         printf '  %02d. %-12s %-12s (%s)\n' "$((i+1))" "$group" "$location" "$isp"
     done
     echo
-    echo "输入示例: 1,2,9,16"
+    echo "输入示例: 1,2,5"
     echo "输入 all 表示全选"
 }
 
@@ -149,18 +125,15 @@ select_nodes() {
     local input token
     SELECTED_IDS=()
     show_nodes
-
     while true; do
         read -r -p "请选择测试地区编号(多选): " input
         input="${input// /}"
-
         if [[ -z "$input" || "$input" == "all" ]]; then
             for token in "${!NODES[@]}"; do
                 SELECTED_IDS+=("$((token+1))")
             done
             break
         fi
-
         IFS=',' read -r -a TOKENS <<< "$input"
         local valid=1
         for token in "${TOKENS[@]}"; do
@@ -169,18 +142,15 @@ select_nodes() {
                 valid=0
             fi
         done
-
         if (( valid == 0 )); then
             echo -e "${RED}输入无效，请重新输入${ENDC}"
             continue
         fi
-
         for token in "${TOKENS[@]}"; do
             if ! array_contains "$token" "${SELECTED_IDS[@]}"; then
                 SELECTED_IDS+=("$token")
             fi
         done
-
         [ ${#SELECTED_IDS[@]} -gt 0 ] && break
     done
 }
@@ -203,7 +173,6 @@ get_duration_option() {
         fi
         echo -e "${RED}请输入数字，例如 0 / 1 / 2.5${ENDC}"
     done
-
     if awk "BEGIN{exit !($DURATION_HOURS>0)}"; then
         while true; do
             read -r -p "每轮测试间隔(分钟，默认10): " INTERVAL_MINUTES
@@ -216,7 +185,6 @@ get_duration_option() {
     else
         INTERVAL_MINUTES=0
     fi
-
     DURATION_SECONDS=$(awk "BEGIN{printf \"%d\", $DURATION_HOURS*3600}")
     INTERVAL_SECONDS=$(awk "BEGIN{printf \"%d\", $INTERVAL_MINUTES*60}")
 }
@@ -247,7 +215,6 @@ run_single_test() {
 
     entry="${NODES[$((id-1))]}"
     IFS='|' read -r group location isp extra dl_b64 ul_b64 <<< "$entry"
-
     dl=$(decode_b64 "$dl_b64")
     ul=$(decode_b64 "$ul_b64")
     node_name=$("$BINARY" -n "$location" 2>/dev/null)
@@ -283,7 +250,6 @@ run_single_test() {
 
 run_test_plan() {
     new_log_files
-
     local end_epoch=0 now round=1 sleep_seconds
     local selected_text=""
     local id entry group location isp extra dl ul
@@ -342,11 +308,25 @@ list_logs() {
         echo -e "${YELLOW}暂无日志${ENDC}"
         return 1
     fi
-
     echo
     local i
     for i in "${!LOG_FILES[@]}"; do
         printf '  %02d. %s\n' "$((i+1))" "$(basename "${LOG_FILES[$i]}")"
+    done
+    echo
+    return 0
+}
+
+list_csvs() {
+    mapfile -t CSV_FILES < <(find "$LOG_DIR" -maxdepth 1 -type f -name '*.csv' | sort -r)
+    if [ ${#CSV_FILES[@]} -eq 0 ]; then
+        echo -e "${YELLOW}暂无CSV日志${ENDC}"
+        return 1
+    fi
+    echo
+    local i
+    for i in "${!CSV_FILES[@]}"; do
+        printf '  %02d. %s\n' "$((i+1))" "$(basename "${CSV_FILES[$i]}")"
     done
     echo
     return 0
@@ -372,6 +352,103 @@ view_log_by_menu() {
     sed -n '1,200p' "${LOG_FILES[$((choice-1))]}"
 }
 
+analyze_csv_file() {
+    local file="$1"
+    if [ ! -f "$file" ]; then
+        echo -e "${RED}CSV文件不存在${ENDC}"
+        return 1
+    fi
+
+    awk -F',' '
+    BEGIN {
+        total=0; ok=0; up_ok=0; down_ok=0; fail=0; cancel=0; broken=0;
+        best_down=-1; best_up=-1; best_lat=-1; best_jitter=-1;
+    }
+    NR==1 { next }
+    {
+        total++;
+        round=$2; group=$3; location=$4; node=$6;
+        up=$7+0; up_status=$8; down=$9+0; down_status=$10; latency=$11+0; jitter=$12+0;
+
+        round_seen[round]=1;
+        group_total[group]++;
+        node_key=group "|" node;
+        node_total[node_key]++;
+
+        if (up_status=="正常") up_ok++;
+        if (down_status=="正常") down_ok++;
+        if (up_status=="正常" && down_status=="正常") {
+            ok++;
+            group_ok[group]++;
+            node_ok[node_key]++;
+            up_sum+=up; down_sum+=down; lat_sum+=latency; jit_sum+=jitter;
+            if (down > best_down) { best_down=down; best_down_node=node_key; }
+            if (up > best_up) { best_up=up; best_up_node=node_key; }
+            if (best_lat<0 || latency < best_lat) { best_lat=latency; best_lat_node=node_key; }
+            if (best_jitter<0 || jitter < best_jitter) { best_jitter=jitter; best_jitter_node=node_key; }
+        }
+        if (up_status=="失败" || down_status=="失败") fail++;
+        if (up_status=="取消" || down_status=="取消") cancel++;
+        if (up_status=="断流" || down_status=="断流") broken++;
+    }
+    END {
+        rounds=0;
+        for (k in round_seen) rounds++;
+        printf "\n———————————————— 分析报告 ————————————————\n";
+        printf "总测试次数: %d\n", total;
+        printf "测试轮数: %d\n", rounds;
+        printf "双向正常次数: %d\n", ok;
+        printf "上传正常次数: %d\n", up_ok;
+        printf "下载正常次数: %d\n", down_ok;
+        printf "失败次数: %d\n", fail;
+        printf "取消次数: %d\n", cancel;
+        printf "断流次数: %d\n", broken;
+        if (ok > 0) {
+            printf "平均上传: %.2f Mbps\n", up_sum/ok;
+            printf "平均下载: %.2f Mbps\n", down_sum/ok;
+            printf "平均延迟: %.2f ms\n", lat_sum/ok;
+            printf "平均抖动: %.2f ms\n", jit_sum/ok;
+            printf "最快下载: %.2f Mbps (%s)\n", best_down, best_down_node;
+            printf "最快上传: %.2f Mbps (%s)\n", best_up, best_up_node;
+            printf "最低延迟: %.2f ms (%s)\n", best_lat, best_lat_node;
+            printf "最低抖动: %.2f ms (%s)\n", best_jitter, best_jitter_node;
+        }
+
+        printf "\n按分组成功率:\n";
+        for (g in group_total) {
+            rate=(group_ok[g]+0)/group_total[g]*100;
+            printf "- %s: %.2f%% (%d/%d)\n", g, rate, group_ok[g]+0, group_total[g];
+        }
+
+        printf "\n节点稳定性:\n";
+        for (n in node_total) {
+            rate=(node_ok[n]+0)/node_total[n]*100;
+            printf "- %s: %.2f%% (%d/%d)\n", n, rate, node_ok[n]+0, node_total[n];
+        }
+        printf "——————————————————————————————————————————\n\n";
+    }' "$file"
+}
+
+analyze_latest_csv() {
+    mapfile -t CSV_FILES < <(find "$LOG_DIR" -maxdepth 1 -type f -name '*.csv' | sort -r)
+    if [ ${#CSV_FILES[@]} -eq 0 ]; then
+        echo -e "${YELLOW}暂无CSV日志${ENDC}"
+        return
+    fi
+    analyze_csv_file "${CSV_FILES[0]}"
+}
+
+analyze_csv_by_menu() {
+    list_csvs || return
+    local choice
+    read -r -p "选择要分析的CSV编号: " choice
+    if [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#CSV_FILES[@]} )); then
+        echo -e "${RED}编号无效${ENDC}"
+        return
+    fi
+    analyze_csv_file "${CSV_FILES[$((choice-1))]}"
+}
+
 main_menu() {
     while true; do
         print_banner
@@ -379,10 +456,11 @@ main_menu() {
         echo "2. 日志列表"
         echo "3. 查看最新日志"
         echo "4. 查看指定日志"
+        echo "5. 分析最新CSV"
+        echo "6. 选择CSV做分析"
         echo "0. 退出"
         echo
         read -r -p "请选择: " menu
-
         case "$menu" in
             1)
                 prepare_bimc
@@ -402,6 +480,14 @@ main_menu() {
                 ;;
             4)
                 view_log_by_menu
+                pause_screen
+                ;;
+            5)
+                analyze_latest_csv
+                pause_screen
+                ;;
+            6)
+                analyze_csv_by_menu
                 pause_screen
                 ;;
             0)
