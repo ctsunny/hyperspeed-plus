@@ -10,7 +10,7 @@ BLUE='\033[0;34m'
 ENDC='\033[0m'
 
 SCRIPT_NAME='HyperSpeed Plus'
-SCRIPT_VERSION='2.0.0'
+SCRIPT_VERSION='3.0.0'
 BASE_DIR="${HOME}/.hyperspeed-plus"
 LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
@@ -19,9 +19,6 @@ THREAD_FLAG=''
 
 mkdir -p "$LOG_DIR" "$WORK_DIR"
 
-# 仅保留你本次测试中可用或部分可用的节点：
-# 1) 上传下载都正常
-# 2) 教育网IPv4 中上传正常但下载断流的节点保留，供观察特殊线路表现
 NODES=(
 '电信|上海|电信||aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQK|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkCg=='
 '电信|江苏镇江5G|电信||aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvZG93bmxvYWQ=|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvdXBsb2Fk'
@@ -32,13 +29,10 @@ NODES=(
 '港澳台日韩|中华电信|台北||aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL3VwbG9hZAo='
 )
 
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
+command_exists() { command -v "$1" >/dev/null 2>&1; }
 
 array_contains() {
-    local seek="$1"
-    shift
+    local seek="$1"; shift
     local item
     for item in "$@"; do
         [[ "$item" == "$seek" ]] && return 0
@@ -47,8 +41,7 @@ array_contains() {
 }
 
 download_file() {
-    local url="$1"
-    local target="$2"
+    local url="$1" target="$2"
     if command_exists curl; then
         curl -fsSL "$url" -o "$target"
     elif command_exists wget; then
@@ -60,15 +53,9 @@ download_file() {
 
 check_dependencies() {
     local missing=()
-    command_exists base64 || missing+=(base64)
-    command_exists awk || missing+=(awk)
-    command_exists sed || missing+=(sed)
-    command_exists date || missing+=(date)
-    command_exists sort || missing+=(sort)
-    command_exists head || missing+=(head)
-    command_exists tail || missing+=(tail)
-    command_exists tr || missing+=(tr)
-    command_exists find || missing+=(find)
+    for cmd in base64 awk sed date sort head tail tr find; do
+        command_exists "$cmd" || missing+=("$cmd")
+    done
     if ! command_exists curl && ! command_exists wget; then
         missing+=(curl/wget)
     fi
@@ -94,18 +81,14 @@ prepare_bimc() {
 print_banner() {
     clear
     echo "—————————————————————— ${SCRIPT_NAME} ${SCRIPT_VERSION} ——————————————————————"
-    echo "  长时压力测速 | 节点多选 | 日志查询 | 日志分析 | CSV 记录"
+    echo "  长时压力测速 | 随机间隔 | 节点多选 | 日志分析 | CSV 记录"
     echo "  日志目录: ${LOG_DIR}"
     echo "——————————————————————————————————————————————————————————————————————————————"
 }
 
-pause_screen() {
-    read -r -p "按回车继续..." _
-}
+pause_screen() { read -r -p "按回车继续..." _; }
 
-is_number() {
-    [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]]
-}
+is_number() { [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]]; }
 
 show_nodes() {
     echo
@@ -175,12 +158,12 @@ get_duration_option() {
     done
     if awk "BEGIN{exit !($DURATION_HOURS>0)}"; then
         while true; do
-            read -r -p "每轮测试间隔(分钟，默认10): " INTERVAL_MINUTES
+            read -r -p "每轮随机间隔上限(分钟，默认10，表示 1~N分钟内随机秒数): " INTERVAL_MINUTES
             INTERVAL_MINUTES="${INTERVAL_MINUTES:-10}"
             if is_number "$INTERVAL_MINUTES"; then
                 break
             fi
-            echo -e "${RED}请输入数字，例如 5 / 10 / 30${ENDC}"
+            echo -e "${RED}请输入数字，例如 1 / 10 / 30${ENDC}"
         done
     else
         INTERVAL_MINUTES=0
@@ -206,12 +189,23 @@ decode_b64() {
     printf '%s' "$1" | base64 -d 2>/dev/null | tr -d '\r\n'
 }
 
+random_wait_seconds() {
+    local max="$1"
+    if (( max <= 1 )); then
+        echo 1
+        return
+    fi
+    if command_exists shuf; then
+        shuf -i 1-"$max" -n 1
+    else
+        echo $(( RANDOM % max + 1 ))
+    fi
+}
+
 run_single_test() {
-    local id="$1"
-    local round="$2"
-    local entry group location isp extra dl_b64 ul_b64
-    local dl ul node_name output upload up_status download down_status latency jitter now
-    local screen plain color
+    local id="$1" round="$2"
+    local entry group location isp extra dl_b64 ul_b64 dl ul node_name output
+    local upload up_status download down_status latency jitter now screen plain color
 
     entry="${NODES[$((id-1))]}"
     IFS='|' read -r group location isp extra dl_b64 ul_b64 <<< "$entry"
@@ -272,6 +266,9 @@ run_test_plan() {
     else
         log_line "${CYAN}线程模式: 单线程${ENDC}" "线程模式: 单线程"
     fi
+    if (( DURATION_SECONDS > 0 )); then
+        log_line "${CYAN}随机间隔规则: 1 ~ ${INTERVAL_SECONDS} 秒${ENDC}" "随机间隔规则: 1 ~ ${INTERVAL_SECONDS} 秒"
+    fi
 
     while true; do
         log_line "${PURPLE}———————————————— 第 ${round} 轮 ————————————————${ENDC}" "———————————————— 第 ${round} 轮 ————————————————"
@@ -289,12 +286,15 @@ run_test_plan() {
             break
         fi
 
-        sleep_seconds=$INTERVAL_SECONDS
+        sleep_seconds=$(random_wait_seconds "$INTERVAL_SECONDS")
         if (( now + sleep_seconds > end_epoch )); then
             sleep_seconds=$(( end_epoch - now ))
         fi
+        if (( sleep_seconds <= 0 )); then
+            break
+        fi
 
-        log_line "${CYAN}等待 ${sleep_seconds} 秒后继续下一轮${ENDC}" "等待 ${sleep_seconds} 秒后继续下一轮"
+        log_line "${CYAN}随机等待 ${sleep_seconds} 秒后继续下一轮${ENDC}" "随机等待 ${sleep_seconds} 秒后继续下一轮"
         sleep "$sleep_seconds"
         round=$((round+1))
     done
@@ -338,7 +338,7 @@ view_latest_log() {
         echo -e "${YELLOW}暂无日志${ENDC}"
         return
     fi
-    sed -n '1,200p' "${LOG_FILES[0]}"
+    sed -n '1,240p' "${LOG_FILES[0]}"
 }
 
 view_log_by_menu() {
@@ -349,7 +349,7 @@ view_log_by_menu() {
         echo -e "${RED}编号无效${ENDC}"
         return
     fi
-    sed -n '1,200p' "${LOG_FILES[$((choice-1))]}"
+    sed -n '1,240p' "${LOG_FILES[$((choice-1))]}"
 }
 
 analyze_csv_file() {
@@ -360,70 +360,132 @@ analyze_csv_file() {
     fi
 
     awk -F',' '
+    function trim(s) { gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", s); return s }
+    function numcmp(i1, v1, i2, v2,    a, b) { a=v1+0; b=v2+0; return (a<b?-1:(a>b?1:0)) }
+    function percentile(arr, n, p,    idx) {
+        if (n <= 0) return 0;
+        asort(arr, sorted, "numcmp");
+        idx = int((n - 1) * p + 1);
+        if (idx < 1) idx = 1;
+        if (idx > n) idx = n;
+        return sorted[idx] + 0;
+    }
     BEGIN {
-        total=0; ok=0; up_ok=0; down_ok=0; fail=0; cancel=0; broken=0;
-        best_down=-1; best_up=-1; best_lat=-1; best_jitter=-1;
+        total=0; rounds=0; success=0; up_ok=0; down_ok=0; fail=0; cancel=0; broken=0;
+        both_zero=0; sample_up=0; sample_down=0; sample_lat=0; sample_jit=0;
     }
     NR==1 { next }
     {
+        round=trim($2); group=trim($3); location=trim($4); isp=trim($5); node=trim($6);
+        up=trim($7)+0; up_status=trim($8); down=trim($9)+0; down_status=trim($10); latency=trim($11)+0; jitter=trim($12)+0;
         total++;
-        round=$2; group=$3; location=$4; node=$6;
-        up=$7+0; up_status=$8; down=$9+0; down_status=$10; latency=$11+0; jitter=$12+0;
-
         round_seen[round]=1;
-        group_total[group]++;
         node_key=group "|" node;
+        group_total[group]++;
         node_total[node_key]++;
 
+        if (up==0 && down==0) both_zero++;
         if (up_status=="正常") up_ok++;
         if (down_status=="正常") down_ok++;
-        if (up_status=="正常" && down_status=="正常") {
-            ok++;
-            group_ok[group]++;
-            node_ok[node_key]++;
-            up_sum+=up; down_sum+=down; lat_sum+=latency; jit_sum+=jitter;
-            if (down > best_down) { best_down=down; best_down_node=node_key; }
-            if (up > best_up) { best_up=up; best_up_node=node_key; }
-            if (best_lat<0 || latency < best_lat) { best_lat=latency; best_lat_node=node_key; }
-            if (best_jitter<0 || jitter < best_jitter) { best_jitter=jitter; best_jitter_node=node_key; }
-        }
         if (up_status=="失败" || down_status=="失败") fail++;
         if (up_status=="取消" || down_status=="取消") cancel++;
         if (up_status=="断流" || down_status=="断流") broken++;
+
+        if (up_status=="正常" && down_status=="正常") {
+            success++;
+            group_ok[group]++;
+            node_ok[node_key]++;
+
+            sample_up++; up_arr[sample_up]=up; up_sum+=up;
+            sample_down++; down_arr[sample_down]=down; down_sum+=down;
+            sample_lat++; lat_arr[sample_lat]=latency; lat_sum+=latency;
+            sample_jit++; jit_arr[sample_jit]=jitter; jit_sum+=jitter;
+
+            node_up_sum[node_key]+=up; node_down_sum[node_key]+=down; node_lat_sum[node_key]+=latency; node_jit_sum[node_key]+=jitter;
+            node_full_ok[node_key]++;
+            group_up_sum[group]+=up; group_down_sum[group]+=down; group_lat_sum[group]+=latency; group_jit_sum[group]+=jitter;
+            group_full_ok[group]++;
+
+            if (best_down=="" || down>best_down_val) { best_down_val=down; best_down=node_key; }
+            if (best_up=="" || up>best_up_val) { best_up_val=up; best_up=node_key; }
+            if (best_lat=="" || latency<best_lat_val) { best_lat_val=latency; best_lat=node_key; }
+            if (best_jit=="" || jitter<best_jit_val) { best_jit_val=jitter; best_jit=node_key; }
+        }
     }
     END {
-        rounds=0;
-        for (k in round_seen) rounds++;
-        printf "\n———————————————— 分析报告 ————————————————\n";
-        printf "总测试次数: %d\n", total;
+        for (r in round_seen) rounds++;
+        success_rate = total>0 ? success/total*100 : 0;
+        up_rate = total>0 ? up_ok/total*100 : 0;
+        down_rate = total>0 ? down_ok/total*100 : 0;
+        broken_rate = total>0 ? broken/total*100 : 0;
+        zero_rate = total>0 ? both_zero/total*100 : 0;
+
+        printf "\n———————————————— 专业分析报告 ————————————————\n";
+        printf "样本总数: %d\n", total;
         printf "测试轮数: %d\n", rounds;
-        printf "双向正常次数: %d\n", ok;
-        printf "上传正常次数: %d\n", up_ok;
-        printf "下载正常次数: %d\n", down_ok;
-        printf "失败次数: %d\n", fail;
-        printf "取消次数: %d\n", cancel;
-        printf "断流次数: %d\n", broken;
-        if (ok > 0) {
-            printf "平均上传: %.2f Mbps\n", up_sum/ok;
-            printf "平均下载: %.2f Mbps\n", down_sum/ok;
-            printf "平均延迟: %.2f ms\n", lat_sum/ok;
-            printf "平均抖动: %.2f ms\n", jit_sum/ok;
-            printf "最快下载: %.2f Mbps (%s)\n", best_down, best_down_node;
-            printf "最快上传: %.2f Mbps (%s)\n", best_up, best_up_node;
-            printf "最低延迟: %.2f ms (%s)\n", best_lat, best_lat_node;
-            printf "最低抖动: %.2f ms (%s)\n", best_jitter, best_jitter_node;
+        printf "双向可用率: %.2f%% (%d/%d)\n", success_rate, success, total;
+        printf "上传可用率: %.2f%% (%d/%d)\n", up_rate, up_ok, total;
+        printf "下载可用率: %.2f%% (%d/%d)\n", down_rate, down_ok, total;
+        printf "断流占比: %.2f%% (%d/%d)\n", broken_rate, broken, total;
+        printf "零速占比: %.2f%% (%d/%d)\n", zero_rate, both_zero, total;
+        printf "失败次数: %d | 取消次数: %d | 断流次数: %d\n", fail, cancel, broken;
+
+        if (success > 0) {
+            up_avg=up_sum/success; down_avg=down_sum/success; lat_avg=lat_sum/success; jit_avg=jit_sum/success;
+            up_p50=percentile(up_arr, sample_up, 0.50); up_p95=percentile(up_arr, sample_up, 0.95);
+            down_p50=percentile(down_arr, sample_down, 0.50); down_p95=percentile(down_arr, sample_down, 0.95);
+            lat_p50=percentile(lat_arr, sample_lat, 0.50); lat_p95=percentile(lat_arr, sample_lat, 0.95);
+            jit_p50=percentile(jit_arr, sample_jit, 0.50); jit_p95=percentile(jit_arr, sample_jit, 0.95);
+
+            printf "\n可用样本统计(仅双向正常):\n";
+            printf "- 上传均值/P50/P95: %.2f / %.2f / %.2f Mbps\n", up_avg, up_p50, up_p95;
+            printf "- 下载均值/P50/P95: %.2f / %.2f / %.2f Mbps\n", down_avg, down_p50, down_p95;
+            printf "- 延迟均值/P50/P95: %.2f / %.2f / %.2f ms\n", lat_avg, lat_p50, lat_p95;
+            printf "- 抖动均值/P50/P95: %.2f / %.2f / %.2f ms\n", jit_avg, jit_p50, jit_p95;
+            printf "- 峰值下载: %.2f Mbps (%s)\n", best_down_val, best_down;
+            printf "- 峰值上传: %.2f Mbps (%s)\n", best_up_val, best_up;
+            printf "- 最低延迟: %.2f ms (%s)\n", best_lat_val, best_lat;
+            printf "- 最低抖动: %.2f ms (%s)\n", best_jit_val, best_jit;
+
+            printf "\n线路判断:\n";
+            if (down_avg >= 50 && lat_p95 <= 200 && jit_p95 <= 15) {
+                printf "- 综合评价: 线路质量较好，适合持续跑带宽业务。\n";
+            } else if (down_avg >= 20 && lat_p95 <= 250) {
+                printf "- 综合评价: 线路可用，适合常规业务，但高峰稳定性还需继续观察。\n";
+            } else {
+                printf "- 综合评价: 线路存在明显短板，建议拉长压测时间后再定结论。\n";
+            }
+            if (broken > 0 && broken_rate >= 20) {
+                printf "- 下载链路存在断流特征，优先排查目标测速端下载方向、回程策略或中间限流。\n";
+            }
+            if (lat_p95 > 180) {
+                printf "- 时延尾部偏高，说明跨境或跨网高峰抖动明显，实时业务体验会受影响。\n";
+            }
+            if (jit_p95 > 10) {
+                printf "- 抖动尾部偏大，建议结合更长时间压测判断是否为队列拥塞或共享带宽波动。\n";
+            }
+        } else {
+            printf "\n可用样本统计: 暂无双向正常样本，无法做吞吐与时延质量评估。\n";
         }
 
-        printf "\n按分组成功率:\n";
+        printf "\n分组画像:\n";
         for (g in group_total) {
             rate=(group_ok[g]+0)/group_total[g]*100;
-            printf "- %s: %.2f%% (%d/%d)\n", g, rate, group_ok[g]+0, group_total[g];
+            printf "- %s: 双向可用率 %.2f%% (%d/%d)", g, rate, group_ok[g]+0, group_total[g];
+            if ((group_full_ok[g]+0) > 0) {
+                printf ", 平均上传 %.2f Mbps, 平均下载 %.2f Mbps, 平均延迟 %.2f ms, 平均抖动 %.2f ms", group_up_sum[g]/group_full_ok[g], group_down_sum[g]/group_full_ok[g], group_lat_sum[g]/group_full_ok[g], group_jit_sum[g]/group_full_ok[g];
+            }
+            printf "\n";
         }
 
-        printf "\n节点稳定性:\n";
+        printf "\n节点画像:\n";
         for (n in node_total) {
             rate=(node_ok[n]+0)/node_total[n]*100;
-            printf "- %s: %.2f%% (%d/%d)\n", n, rate, node_ok[n]+0, node_total[n];
+            printf "- %s: 双向可用率 %.2f%% (%d/%d)", n, rate, node_ok[n]+0, node_total[n];
+            if ((node_full_ok[n]+0) > 0) {
+                printf ", 平均上传 %.2f Mbps, 平均下载 %.2f Mbps, 平均延迟 %.2f ms, 平均抖动 %.2f ms", node_up_sum[n]/node_full_ok[n], node_down_sum[n]/node_full_ok[n], node_lat_sum[n]/node_full_ok[n], node_jit_sum[n]/node_full_ok[n];
+            }
+            printf "\n";
         }
         printf "——————————————————————————————————————————\n\n";
     }' "$file"
@@ -462,41 +524,14 @@ main_menu() {
         echo
         read -r -p "请选择: " menu
         case "$menu" in
-            1)
-                prepare_bimc
-                select_nodes
-                get_thread_option
-                get_duration_option
-                run_test_plan
-                pause_screen
-                ;;
-            2)
-                list_logs
-                pause_screen
-                ;;
-            3)
-                view_latest_log
-                pause_screen
-                ;;
-            4)
-                view_log_by_menu
-                pause_screen
-                ;;
-            5)
-                analyze_latest_csv
-                pause_screen
-                ;;
-            6)
-                analyze_csv_by_menu
-                pause_screen
-                ;;
-            0)
-                exit 0
-                ;;
-            *)
-                echo -e "${RED}无效选项${ENDC}"
-                sleep 1
-                ;;
+            1) prepare_bimc; select_nodes; get_thread_option; get_duration_option; run_test_plan; pause_screen ;;
+            2) list_logs; pause_screen ;;
+            3) view_latest_log; pause_screen ;;
+            4) view_log_by_menu; pause_screen ;;
+            5) analyze_latest_csv; pause_screen ;;
+            6) analyze_csv_by_menu; pause_screen ;;
+            0) exit 0 ;;
+            *) echo -e "${RED}无效选项${ENDC}"; sleep 1 ;;
         esac
     done
 }
