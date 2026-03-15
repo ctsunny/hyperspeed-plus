@@ -9,7 +9,7 @@ CYAN='\033[0;36m'
 ENDC='\033[0m'
 
 SCRIPT_NAME='HyperSpeed Plus'
-SCRIPT_VERSION='7.1.0'
+SCRIPT_VERSION='7.2.0'
 BASE_DIR="${HOME}/.hyperspeed-plus"
 LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
@@ -24,12 +24,11 @@ TASK_FILE="${RUN_DIR}/task.env"
 DAEMON_STDOUT="${RUN_DIR}/daemon.out"
 LAST_LOG_FILE="${RUN_DIR}/last_log_path"
 LAST_CSV_FILE="${RUN_DIR}/last_csv_path"
+TC_IFACE=""   # 用于记录被限速的网卡，方便清除
 
 mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR"
 
-# 节点列表 v7.1: 修复失效节点
-# 联通: 换用 speedtest.189.cn 系 / speedtest.ln.chinanet.cn
-# 移动: 换用 speedtest.189.cn 备用 / speedtest.gd.chinamobile.com
+# 节点列表 v7.2
 NODES=(
 'bimc|电信|上海|电信|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQK|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkCg=='
 'bimc|电信|江苏镇江5G|电信|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvZG93bmxvYWQ=|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvdXBsb2Fk'
@@ -82,6 +81,70 @@ prepare_bimc() {
     fi
 }
 
+# ─────────────────────────────────────────────
+#  tc 系统层带宽限速（不依赖 bimc 参数）
+#  tc qdisc add dev <iface> root tbf rate <N>mbit ...
+# ─────────────────────────────────────────────
+get_default_iface() {
+    # 取默认路由网卡
+    local iface
+    iface=$(ip route show default 2>/dev/null | awk '/default/{print $5; exit}')
+    [ -z "$iface" ] && iface=$(ip link show | awk -F': ' '/^[0-9]+: (eth|ens|enp|em|bond|vnet|veth)/{print $2; exit}')
+    echo "$iface"
+}
+
+tc_set_limit() {
+    local mbps="$1"
+    # 需要 tc 且 root 权限
+    if ! command_exists tc; then
+        echo -e "${YELLOW}[限速] tc 命令不存在，跳过带宽限速（将使用全速测试）${ENDC}"
+        TC_IFACE=""
+        return
+    fi
+    if [ "$(id -u)" != "0" ]; then
+        echo -e "${YELLOW}[限速] 非 root 用户无法使用 tc，跳过带宽限速${ENDC}"
+        TC_IFACE=""
+        return
+    fi
+    local iface; iface=$(get_default_iface)
+    if [ -z "$iface" ]; then
+        echo -e "${YELLOW}[限速] 无法检测网卡，跳过带宽限速${ENDC}"
+        TC_IFACE=""
+        return
+    fi
+    # 先清理旧规则
+    tc qdisc del dev "$iface" root 2>/dev/null || true
+    # TBF: rate=限速, burst=1mbit缓冲, latency=50ms
+    local burst_kbit=$(( mbps * 1000 / 8 ))
+    [ "$burst_kbit" -lt 16 ] && burst_kbit=16
+    tc qdisc add dev "$iface" root tbf rate "${mbps}mbit" burst "${burst_kbit}kb" latency 50ms 2>/dev/null
+    if [ $? -eq 0 ]; then
+        TC_IFACE="$iface"
+        echo -e "${GREEN}[限速] 已对 ${iface} 设置 ${mbps}Mbps 上限${ENDC}"
+    else
+        echo -e "${YELLOW}[限速] tc 设置失败，将使用全速测试${ENDC}"
+        TC_IFACE=""
+    fi
+}
+
+tc_clear_limit() {
+    if [ -n "$TC_IFACE" ] && command_exists tc && [ "$(id -u)" = "0" ]; then
+        tc qdisc del dev "$TC_IFACE" root 2>/dev/null || true
+        echo -e "${CYAN}[限速] 已恢复 ${TC_IFACE} 带宽限制${ENDC}"
+        TC_IFACE=""
+    fi
+}
+
+# 在测试前应用限速，测试后清除
+apply_bandwidth_limit() {
+    awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null || return 0
+    tc_set_limit "$BANDWIDTH_LIMIT"
+}
+
+cleanup_bandwidth_limit() {
+    tc_clear_limit
+}
+
 print_banner() {
     clear
     echo "————————————— ${SCRIPT_NAME} v${SCRIPT_VERSION} —————————————"
@@ -109,6 +172,11 @@ get_bandwidth_limit() {
     echo -e "${CYAN}带宽上限限速 (防止跑满带宽)${ENDC}"
     echo "  例如：服务器50Mbps，填30 则限制30Mbps以内测速"
     echo "  填0 = 不限速（默认）"
+    if ! command_exists tc; then
+        echo -e "${YELLOW}  注意: 系统无 tc 命令，带宽限速功能不可用${ENDC}"
+    elif [ "$(id -u)" != "0" ]; then
+        echo -e "${YELLOW}  注意: 非 root 用户，带宽限速需 root 权限${ENDC}"
+    fi
     while true; do
         read -r -p "带宽上限 Mbps (默认0=不限): " BANDWIDTH_LIMIT
         BANDWIDTH_LIMIT="${BANDWIDTH_LIMIT:-0}"
@@ -250,18 +318,6 @@ is_running() {
     [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
 }
 
-# 构建 bimc 命令（含带宽限速参数）
-build_bimc_cmd() {
-    local dl="$1" ul="$2"
-    local cmd=("$BINARY" "$dl" "$ul")
-    [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
-    # bimc 支持 -b <Mbps> 带宽上限
-    if awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null; then
-        cmd+=("-b" "$BANDWIDTH_LIMIT")
-    fi
-    printf '%q ' "${cmd[@]}"
-}
-
 run_single_test() {
     local id="$1" round="$2"
     local entry group location isp dl_b64 ul_b64
@@ -274,11 +330,9 @@ run_single_test() {
     dl=$(decode_b64 "$dl_b64")
     ul=$(decode_b64 "$ul_b64")
 
+    # bimc 直接调用，不传 -b，限速由 tc 系统层负责
     local cmd=("$BINARY" "$dl" "$ul")
     [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
-    if awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null; then
-        cmd+=("-b" "$BANDWIDTH_LIMIT")
-    fi
     output=$("${cmd[@]}" 2>/dev/null)
 
     IFS=',' read -r upload up_status download down_status latency jitter <<< "$output"
@@ -308,6 +362,10 @@ run_single_test() {
 
 run_test_plan() {
     new_log_files
+    # 启用带宽限速
+    apply_bandwidth_limit
+    trap 'cleanup_bandwidth_limit' EXIT INT TERM
+
     local end_epoch=0 now round=1 sleep_seconds
     (( DURATION_SECONDS > 0 )) && end_epoch=$(( $(date +%s) + DURATION_SECONDS ))
     local bw_info=""
@@ -330,6 +388,7 @@ run_test_plan() {
         round=$(( round + 1 ))
     done
     log_line "${GREEN}测试完成${ENDC}" "测试完成"
+    cleanup_bandwidth_limit
     rm -f "$PID_FILE"
 }
 
@@ -344,6 +403,10 @@ run_stability_test() {
     IFS='|' read -r _ group location isp dl_b64 ul_b64 <<< "$entry"
     dl=$(decode_b64 "$dl_b64")
     ul=$(decode_b64 "$ul_b64")
+
+    # 启用带宽限速
+    apply_bandwidth_limit
+    trap 'cleanup_bandwidth_limit; echo -e "\n${YELLOW}稳定性测试已停止${ENDC}"' EXIT INT TERM
 
     local bw_info=""
     awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null && bw_info="  带宽限速: ${BANDWIDTH_LIMIT}Mbps"
@@ -361,14 +424,13 @@ run_stability_test() {
     # 累计统计
     local total_cnt=0 ok_cnt=0
     local sum_up=0 sum_dn=0 sum_la=0
-    local min_dn=999999 max_dn=0 min_la=999999
+    local min_dn=999999 max_dn=0
 
     while true; do
         local now output upload up_status download down_status latency jitter color screen plain
         now=$(date '+%F %T')
         local cmd=("$BINARY" "$dl" "$ul")
         [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
-        awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null && cmd+=("-b" "$BANDWIDTH_LIMIT")
         output=$("${cmd[@]}" 2>/dev/null)
         IFS=',' read -r upload up_status download down_status latency jitter <<< "$output"
         upload="${upload:-0}"; up_status="${up_status:-失败}"
@@ -384,7 +446,6 @@ run_stability_test() {
             sum_la=$(awk "BEGIN{printf \"%.4f\", $sum_la+$latency}")
             awk "BEGIN{exit !($download<$min_dn)}" 2>/dev/null && min_dn=$download
             awk "BEGIN{exit !($download>$max_dn)}" 2>/dev/null && max_dn=$download
-            awk "BEGIN{exit !($latency<$min_la)}" 2>/dev/null && min_la=$latency
         else
             color="$RED"
         fi
@@ -456,6 +517,7 @@ PID_FILE="${RUN_DIR}/hyperspeed.pid"
 TASK_FILE="${RUN_DIR}/task.env"
 LAST_LOG_FILE="${RUN_DIR}/last_log_path"
 LAST_CSV_FILE="${RUN_DIR}/last_csv_path"
+TC_IFACE=""
 mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR"
 [ -f "$TASK_FILE" ] || { echo "task.env not found"; exit 1; }
 source "$TASK_FILE"
@@ -473,6 +535,29 @@ prepare_bimc() {
         && curl -fsSL "https://bench.im/bimc-${arch}" -o "$BINARY" \
         || wget --no-check-certificate -qO "$BINARY" "https://bench.im/bimc-${arch}"
     chmod +x "$BINARY"
+}
+get_default_iface() {
+    local iface
+    iface=$(ip route show default 2>/dev/null | awk '/default/{print $5; exit}')
+    [ -z "$iface" ] && iface=$(ip link show | awk -F': ' '/^[0-9]+: (eth|ens|enp|em|bond|vnet|veth)/{print $2; exit}')
+    echo "$iface"
+}
+tc_set_limit() {
+    local mbps="$1"
+    command -v tc >/dev/null 2>&1 || return
+    [ "$(id -u)" = "0" ] || return
+    local iface; iface=$(get_default_iface)
+    [ -z "$iface" ] && return
+    tc qdisc del dev "$iface" root 2>/dev/null || true
+    local burst_kbit=$(( mbps * 1000 / 8 ))
+    [ "$burst_kbit" -lt 16 ] && burst_kbit=16
+    tc qdisc add dev "$iface" root tbf rate "${mbps}mbit" burst "${burst_kbit}kb" latency 50ms 2>/dev/null \
+        && TC_IFACE="$iface"
+}
+tc_clear_limit() {
+    [ -n "$TC_IFACE" ] && command -v tc >/dev/null 2>&1 && [ "$(id -u)" = "0" ] \
+        && tc qdisc del dev "$TC_IFACE" root 2>/dev/null || true
+    TC_IFACE=""
 }
 new_log_files() {
     local ts; ts=$(date '+%Y%m%d-%H%M%S')
@@ -494,7 +579,6 @@ run_single_test() {
     dl=$(decode_b64 "$dl_b64"); ul=$(decode_b64 "$ul_b64")
     local cmd=("$BINARY" "$dl" "$ul")
     [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
-    awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null && cmd+=("-b" "$BANDWIDTH_LIMIT")
     output=$("${cmd[@]}" 2>/dev/null)
     IFS=',' read -r upload up_status download down_status latency jitter <<< "$output"
     upload="${upload:-0}"; up_status="${up_status:-失败}"
@@ -508,8 +592,9 @@ run_single_test() {
         "$latency" "$jitter" >> "$CSV_FILE"
 }
 run_test_plan() {
-    trap 'rm -f "$PID_FILE"' EXIT
+    trap 'tc_clear_limit; rm -f "$PID_FILE"' EXIT
     new_log_files
+    awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null && tc_set_limit "$BANDWIDTH_LIMIT"
     local end_epoch=0 now round=1 sleep_seconds
     (( DURATION_SECONDS>0 )) && end_epoch=$(( $(date +%s)+DURATION_SECONDS ))
     log_line "开始测试  日志: ${LOG_FILE}" "开始测试  日志: ${LOG_FILE}"
@@ -572,8 +657,8 @@ start_background_task() {
         echo -e "${GREEN}║  PID: ${pid}$(printf '%*s' $((38-${#pid})) '')║${ENDC}"
         echo -e "${GREEN}║  现在可以安全断开 SSH，测速不会中断      ║${ENDC}"
         echo -e "${GREEN}╠══════════════════════════════════════════╣${ENDC}"
-        echo -e "${GREEN}║  查看进度：主菜单选 3                    ║${ENDC}"
-        echo -e "${GREEN}║  停止任务：主菜单选 4                    ║${ENDC}"
+        echo -e "${GREEN}║  查看进度：主菜单选 4                    ║${ENDC}"
+        echo -e "${GREEN}║  停止任务：主菜单选 5                    ║${ENDC}"
         echo -e "${GREEN}╚══════════════════════════════════════════╝${ENDC}"
     else
         echo -e "${RED}后台任务启动失败${ENDC}"; rm -f "$PID_FILE"
