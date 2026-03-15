@@ -10,7 +10,7 @@ BLUE='\033[0;34m'
 ENDC='\033[0m'
 
 SCRIPT_NAME='HyperSpeed Plus'
-SCRIPT_VERSION='5.2.1'
+SCRIPT_VERSION='6.0.0'
 BASE_DIR="${HOME}/.hyperspeed-plus"
 LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
@@ -18,6 +18,7 @@ REPORT_DIR="${BASE_DIR}/reports"
 RUN_DIR="${BASE_DIR}/run"
 BIN_DIR="${BASE_DIR}/bin"
 SELF_PATH="${BIN_DIR}/hyperspeed-plus.sh"
+WORKER_SCRIPT="${RUN_DIR}/worker.sh"
 BINARY="${WORK_DIR}/bimc"
 THREAD_FLAG=''
 
@@ -375,45 +376,216 @@ run_test_plan() {
     rm -f "$PID_FILE"
 }
 
+write_worker_script() {
+    cat > "$WORKER_SCRIPT" <<'EOF'
+#!/usr/bin/env bash
+set -o pipefail
+
+BASE_DIR="${HOME}/.hyperspeed-plus"
+LOG_DIR="${BASE_DIR}/logs"
+WORK_DIR="${BASE_DIR}/tmp"
+REPORT_DIR="${BASE_DIR}/reports"
+RUN_DIR="${BASE_DIR}/run"
+BINARY="${WORK_DIR}/bimc"
+PID_FILE="${RUN_DIR}/hyperspeed.pid"
+TASK_FILE="${RUN_DIR}/task.env"
+LAST_LOG_FILE="${RUN_DIR}/last_log_path"
+LAST_CSV_FILE="${RUN_DIR}/last_csv_path"
+
+mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR"
+
+NODES=(
+'电信|上海|电信||aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQK|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkCg=='
+'电信|江苏镇江5G|电信||aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvZG93bmxvYWQ=|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvdXBsb2Fk'
+'电信|江苏南京5G|电信||aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL3VwbG9hZAo='
+'港澳台日韩|环电宽频|香港||aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL3VwbG9hZAo='
+'港澳台日韩|中华电信|台北||aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL3VwbG9hZAo='
+)
+
+command_exists() { command -v "$1" >/dev/null 2>&1; }
+
+download_file() {
+    local url="$1" target="$2"
+    if command_exists curl; then
+        curl -fsSL "$url" -o "$target"
+    elif command_exists wget; then
+        wget --no-check-certificate -qO "$target" "$url"
+    else
+        return 1
+    fi
+}
+
+prepare_bimc() {
+    if [ ! -x "$BINARY" ]; then
+        local arch
+        arch=$(uname -m)
+        download_file "https://bench.im/bimc-${arch}" "$BINARY" || exit 1
+        chmod +x "$BINARY"
+    fi
+}
+
+decode_b64() {
+    printf '%s' "$1" | base64 -d 2>/dev/null | tr -d '\r\n'
+}
+
+random_wait_seconds() {
+    local max="$1"
+    if (( max <= 1 )); then
+        echo 1
+        return
+    fi
+    if command -v shuf >/dev/null 2>&1; then
+        shuf -i 1-"$max" -n 1
+    else
+        echo $(( RANDOM % max + 1 ))
+    fi
+}
+
+new_log_files() {
+    local ts
+    ts=$(date '+%Y%m%d-%H%M%S')
+    LOG_FILE="${LOG_DIR}/hyperspeed-${ts}.log"
+    CSV_FILE="${LOG_DIR}/hyperspeed-${ts}.csv"
+    printf 'time,round,group,location,isp,node_name,upload_mbps,upload_status,download_mbps,download_status,latency_ms,jitter_ms\n' > "$CSV_FILE"
+    echo "$LOG_FILE" > "$LAST_LOG_FILE"
+    echo "$CSV_FILE" > "$LAST_CSV_FILE"
+}
+
+log_line() {
+    printf '%b\n' "$1"
+    printf '%b\n' "$2" >> "$LOG_FILE"
+}
+
+run_single_test() {
+    local id="$1" round="$2"
+    local entry group location isp extra dl_b64 ul_b64 dl ul node_name output
+    local upload up_status download down_status latency jitter now plain
+
+    entry="${NODES[$((id-1))]}"
+    IFS='|' read -r group location isp extra dl_b64 ul_b64 <<< "$entry"
+    dl=$(decode_b64 "$dl_b64")
+    ul=$(decode_b64 "$ul_b64")
+    node_name=$("$BINARY" -n "$location" 2>/dev/null)
+    [ -n "$node_name" ] || node_name="$location"
+
+    local cmd=("$BINARY" "$dl" "$ul")
+    [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
+    [ -n "$extra" ] && cmd+=("$extra")
+
+    output=$("${cmd[@]}" 2>/dev/null)
+    IFS=',' read -r upload up_status download down_status latency jitter <<< "$output"
+
+    upload="${upload:-0}"
+    up_status="${up_status:-失败}"
+    download="${download:-0}"
+    down_status="${down_status:-失败}"
+    latency="${latency:-0}"
+    jitter="${jitter:-0}"
+    now=$(date '+%F %T')
+    plain="[第${round}轮] ${group} | ${node_name} ↑${upload} ${up_status} ↓${download} ${down_status} ↕${latency} ϟ${jitter}"
+    log_line "$plain" "$plain"
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$now" "$round" "$group" "$location" "$isp" "$node_name" "$upload" "$up_status" "$download" "$down_status" "$latency" "$jitter" >> "$CSV_FILE"
+}
+
+run_test_plan() {
+    trap 'rm -f "$PID_FILE"' EXIT
+    new_log_files
+    local end_epoch=0 now round=1 sleep_seconds
+    local selected_text=""
+    local id entry group location isp extra dl ul
+
+    for id in "${SELECTED_IDS[@]}"; do
+        entry="${NODES[$((id-1))]}"
+        IFS='|' read -r group location isp extra dl ul <<< "$entry"
+        selected_text+="${group}-${location} "
+    done
+
+    if (( DURATION_SECONDS > 0 )); then
+        end_epoch=$(( $(date +%s) + DURATION_SECONDS ))
+    fi
+
+    log_line "开始测试，日志: ${LOG_FILE}" "开始测试，日志: ${LOG_FILE}"
+    log_line "CSV结果: ${CSV_FILE}" "CSV结果: ${CSV_FILE}"
+    log_line "所选节点: ${selected_text}" "所选节点: ${selected_text}"
+    if [[ -n "$THREAD_FLAG" ]]; then
+        log_line "线程模式: 八线程" "线程模式: 八线程"
+    else
+        log_line "线程模式: 单线程" "线程模式: 单线程"
+    fi
+    if (( DURATION_SECONDS > 0 )); then
+        log_line "随机间隔规则: 1 ~ ${INTERVAL_SECONDS} 秒" "随机间隔规则: 1 ~ ${INTERVAL_SECONDS} 秒"
+    fi
+
+    while true; do
+        log_line "———————————————— 第 ${round} 轮 ————————————————" "———————————————— 第 ${round} 轮 ————————————————"
+        for id in "${SELECTED_IDS[@]}"; do
+            run_single_test "$id" "$round"
+            sleep 2
+        done
+        if (( DURATION_SECONDS == 0 )); then
+            break
+        fi
+        now=$(date +%s)
+        if (( now >= end_epoch )); then
+            break
+        fi
+        sleep_seconds=$(random_wait_seconds "$INTERVAL_SECONDS")
+        if (( now + sleep_seconds > end_epoch )); then
+            sleep_seconds=$(( end_epoch - now ))
+        fi
+        if (( sleep_seconds <= 0 )); then
+            break
+        fi
+        log_line "随机等待 ${sleep_seconds} 秒后继续下一轮" "随机等待 ${sleep_seconds} 秒后继续下一轮"
+        sleep "$sleep_seconds"
+        round=$((round+1))
+    done
+
+    log_line "测试完成" "测试完成"
+}
+
+[ -f "$TASK_FILE" ] || exit 1
+# shellcheck disable=SC1090
+source "$TASK_FILE"
+prepare_bimc
+run_test_plan
+EOF
+    chmod +x "$WORKER_SCRIPT"
+}
+
 start_background_task() {
     if is_running; then
         echo -e "${YELLOW}已有后台测速任务在运行，PID: $(cat "$PID_FILE")${ENDC}"
         return
     fi
 
-    ensure_self_copy || return
     prepare_bimc
     select_nodes
     get_thread_option
     get_duration_option
     save_task_env
+    write_worker_script
 
     : > "$DAEMON_STDOUT"
-    nohup "$SELF_PATH" --daemon-run >> "$DAEMON_STDOUT" 2>&1 &
+    nohup bash "$WORKER_SCRIPT" >> "$DAEMON_STDOUT" 2>&1 &
     local pid=$!
     echo "$pid" > "$PID_FILE"
-    sleep 2
+    sleep 3
 
     if ps -p "$pid" >/dev/null 2>&1; then
         echo -e "${GREEN}后台任务已启动${ENDC}"
         echo "PID: $pid"
         echo "后台输出: $DAEMON_STDOUT"
-        echo "本地脚本副本: $SELF_PATH"
+        echo "后台工作脚本: $WORKER_SCRIPT"
         echo "提示: 现在断开 SSH 也不会中断测速"
     else
         echo -e "${RED}后台任务启动失败${ENDC}"
         rm -f "$PID_FILE"
-        [ -f "$DAEMON_STDOUT" ] && tail -n 50 "$DAEMON_STDOUT"
+        [ -f "$DAEMON_STDOUT" ] && tail -n 80 "$DAEMON_STDOUT"
     fi
 }
 
-daemon_run() {
-    load_task_env || exit 1
-    prepare_bimc
-    run_test_plan
-}
-
-show_status() {
+show_status() { {
     if is_running; then
         local pid
         pid=$(cat "$PID_FILE")
@@ -813,12 +985,6 @@ main_menu() {
         esac
     done
 }
-
-if [[ "${1:-}" == "--daemon-run" ]]; then
-    check_dependencies
-    daemon_run
-    exit 0
-fi
 
 check_dependencies
 main_menu
