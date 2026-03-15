@@ -26,11 +26,6 @@ LAST_CSV_FILE="${RUN_DIR}/last_csv_path"
 
 mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR"
 
-# 节点策略(v7.0): 仅保留境外出口可达节点
-# 电信: online.sh.cn / jsinfo.net 系 (已验证)
-# 联通: niutk.com(HTTPS) / hn165.com / cdn16.com (双线/CDN)
-# 移动: 139play.com / one-punch.win / 北京直连IP
-# 港澳台: 香港/澳门/台北/东京 (已验证)
 NODES=(
 'bimc|电信|上海|电信|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQK|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkCg=='
 'bimc|电信|江苏镇江5G|电信|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvZG93bmxvYWQ=|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvdXBsb2Fk'
