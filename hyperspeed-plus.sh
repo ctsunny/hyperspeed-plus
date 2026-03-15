@@ -9,7 +9,7 @@ CYAN='\033[0;36m'
 ENDC='\033[0m'
 
 SCRIPT_NAME='HyperSpeed Plus'
-SCRIPT_VERSION='7.2.0'
+SCRIPT_VERSION='7.3.0'
 BASE_DIR="${HOME}/.hyperspeed-plus"
 LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
@@ -25,10 +25,12 @@ DAEMON_STDOUT="${RUN_DIR}/daemon.out"
 LAST_LOG_FILE="${RUN_DIR}/last_log_path"
 LAST_CSV_FILE="${RUN_DIR}/last_csv_path"
 TC_IFACE=""   # 用于记录被限速的网卡，方便清除
+# 稳定性测试退出标志
+_STABILITY_STOP=0
 
 mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR"
 
-# 节点列表 v7.2
+# 节点列表 v7.3
 NODES=(
 'bimc|电信|上海|电信|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQK|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkCg=='
 'bimc|电信|江苏镇江5G|电信|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvZG93bmxvYWQ=|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvdXBsb2Fk'
@@ -82,11 +84,11 @@ prepare_bimc() {
 }
 
 # ─────────────────────────────────────────────
-#  tc 系统层带宽限速（不依赖 bimc 参数）
-#  tc qdisc add dev <iface> root tbf rate <N>mbit ...
+#  tc 系统层带宽限速（仅限制下载方向 ingress）
+#  使用 IFB 虚拟网卡对入口(ingress)限速
+#  避免限制上传导致 bimc 误判断流
 # ─────────────────────────────────────────────
 get_default_iface() {
-    # 取默认路由网卡
     local iface
     iface=$(ip route show default 2>/dev/null | awk '/default/{print $5; exit}')
     [ -z "$iface" ] && iface=$(ip link show | awk -F': ' '/^[0-9]+: (eth|ens|enp|em|bond|vnet|veth)/{print $2; exit}')
@@ -95,47 +97,62 @@ get_default_iface() {
 
 tc_set_limit() {
     local mbps="$1"
-    # 需要 tc 且 root 权限
     if ! command_exists tc; then
         echo -e "${YELLOW}[限速] tc 命令不存在，跳过带宽限速（将使用全速测试）${ENDC}"
-        TC_IFACE=""
-        return
+        TC_IFACE=""; return
     fi
     if [ "$(id -u)" != "0" ]; then
         echo -e "${YELLOW}[限速] 非 root 用户无法使用 tc，跳过带宽限速${ENDC}"
-        TC_IFACE=""
-        return
+        TC_IFACE=""; return
     fi
     local iface; iface=$(get_default_iface)
     if [ -z "$iface" ]; then
         echo -e "${YELLOW}[限速] 无法检测网卡，跳过带宽限速${ENDC}"
-        TC_IFACE=""
-        return
+        TC_IFACE=""; return
     fi
-    # 先清理旧规则
-    tc qdisc del dev "$iface" root 2>/dev/null || true
-    # TBF: rate=限速, burst=1mbit缓冲, latency=50ms
+
+    # ── 先清理旧规则 ──
+    tc qdisc del dev "$iface" root    2>/dev/null || true
+    tc qdisc del dev "$iface" ingress 2>/dev/null || true
+    ip link set dev ifb0 down         2>/dev/null || true
+    tc qdisc del dev ifb0 root        2>/dev/null || true
+
     local burst_kbit=$(( mbps * 1000 / 8 ))
     [ "$burst_kbit" -lt 16 ] && burst_kbit=16
+
+    # ── 出口(egress/上传)限速 ──
     tc qdisc add dev "$iface" root tbf rate "${mbps}mbit" burst "${burst_kbit}kb" latency 50ms 2>/dev/null
-    if [ $? -eq 0 ]; then
-        TC_IFACE="$iface"
-        echo -e "${GREEN}[限速] 已对 ${iface} 设置 ${mbps}Mbps 上限${ENDC}"
+
+    # ── 入口(ingress/下载)限速：尝试 IFB 方案 ──
+    local ingress_ok=0
+    if modprobe ifb 2>/dev/null && ip link set dev ifb0 up 2>/dev/null; then
+        tc qdisc add dev "$iface" ingress 2>/dev/null || true
+        tc filter add dev "$iface" parent ffff: protocol ip u32 \
+            match u32 0 0 action mirred egress redirect dev ifb0 2>/dev/null \
+            && tc qdisc add dev ifb0 root tbf rate "${mbps}mbit" burst "${burst_kbit}kb" latency 50ms 2>/dev/null \
+            && ingress_ok=1
+    fi
+
+    TC_IFACE="$iface"
+    if [ "$ingress_ok" -eq 1 ]; then
+        echo -e "${GREEN}[限速] 已对 ${iface} 设置双向 ${mbps}Mbps 限速（出口+入口）${ENDC}"
     else
-        echo -e "${YELLOW}[限速] tc 设置失败，将使用全速测试${ENDC}"
-        TC_IFACE=""
+        echo -e "${YELLOW}[限速] 已对 ${iface} 仅设置出口 ${mbps}Mbps 限速（IFB 不可用，入口限速跳过）${ENDC}"
+        echo -e "${YELLOW}[限速] 注意：bimc 测速时上传可能显示断流，属正常现象，可用率统计已修正为仅判断下载${ENDC}"
     fi
 }
 
 tc_clear_limit() {
     if [ -n "$TC_IFACE" ] && command_exists tc && [ "$(id -u)" = "0" ]; then
-        tc qdisc del dev "$TC_IFACE" root 2>/dev/null || true
+        tc qdisc del dev "$TC_IFACE" root    2>/dev/null || true
+        tc qdisc del dev "$TC_IFACE" ingress 2>/dev/null || true
+        ip link set dev ifb0 down            2>/dev/null || true
+        tc qdisc del dev ifb0 root           2>/dev/null || true
         echo -e "${CYAN}[限速] 已恢复 ${TC_IFACE} 带宽限制${ENDC}"
         TC_IFACE=""
     fi
 }
 
-# 在测试前应用限速，测试后清除
 apply_bandwidth_limit() {
     awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null || return 0
     tc_set_limit "$BANDWIDTH_LIMIT"
@@ -330,7 +347,6 @@ run_single_test() {
     dl=$(decode_b64 "$dl_b64")
     ul=$(decode_b64 "$ul_b64")
 
-    # bimc 直接调用，不传 -b，限速由 tc 系统层负责
     local cmd=("$BINARY" "$dl" "$ul")
     [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
     output=$("${cmd[@]}" 2>/dev/null)
@@ -362,7 +378,6 @@ run_single_test() {
 
 run_test_plan() {
     new_log_files
-    # 启用带宽限速
     apply_bandwidth_limit
     trap 'cleanup_bandwidth_limit' EXIT INT TERM
 
@@ -394,9 +409,13 @@ run_test_plan() {
 
 # ─────────────────────────────────────────────
 #  稳定性测试: 单线路 + 暂停间隔 + 无限循环
+#  修复：
+#    1. Ctrl+C 设置 _STABILITY_STOP=1 后 exit，真正退出
+#    2. 可用率判断：带宽限速时仅判断下载，避免上传被tc压低误报断流
 # ─────────────────────────────────────────────
 run_stability_test() {
     new_log_files
+    _STABILITY_STOP=0
     local id="${SELECTED_IDS[0]}" round=1
     local entry group location isp dl_b64 ul_b64 dl ul
     entry="${NODES[$((id-1))]}"
@@ -404,9 +423,17 @@ run_stability_test() {
     dl=$(decode_b64 "$dl_b64")
     ul=$(decode_b64 "$ul_b64")
 
-    # 启用带宽限速
     apply_bandwidth_limit
-    trap 'cleanup_bandwidth_limit; echo -e "\n${YELLOW}稳定性测试已停止${ENDC}"' EXIT INT TERM
+
+    # ── 关键修复：trap 里设标志位 + 清限速 + exit ──
+    _stability_cleanup() {
+        _STABILITY_STOP=1
+        cleanup_bandwidth_limit
+        echo -e "\n${YELLOW}稳定性测试已停止${ENDC}"
+        exit 0
+    }
+    trap '_stability_cleanup' INT TERM
+    trap 'cleanup_bandwidth_limit' EXIT
 
     local bw_info=""
     awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null && bw_info="  带宽限速: ${BANDWIDTH_LIMIT}Mbps"
@@ -421,12 +448,17 @@ run_stability_test() {
     log_line "${CYAN}稳定性测试开始  节点: ${group}|${location}${bw_info}${pause_info}${ENDC}" \
              "稳定性测试开始  节点: ${group}|${location}${bw_info}${pause_info}"
 
-    # 累计统计
+    # 带宽限速时，tc 只限出口，上传会被压低，仅用下载判断可用率
+    local use_dl_only=0
+    awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null && use_dl_only=1
+
     local total_cnt=0 ok_cnt=0
     local sum_up=0 sum_dn=0 sum_la=0
     local min_dn=999999 max_dn=0
 
     while true; do
+        [ "$_STABILITY_STOP" -eq 1 ] && break
+
         local now output upload up_status download down_status latency jitter color screen plain
         now=$(date '+%F %T')
         local cmd=("$BINARY" "$dl" "$ul")
@@ -439,7 +471,16 @@ run_stability_test() {
 
         total_cnt=$(( total_cnt + 1 ))
         color="$GREEN"
-        if [[ "$up_status" == "正常" && "$down_status" == "正常" ]]; then
+
+        # 可用性判断：限速时只看下载，不限速时上下载都要正常
+        local is_ok=0
+        if [ "$use_dl_only" -eq 1 ]; then
+            [[ "$down_status" == "正常" ]] && is_ok=1
+        else
+            [[ "$up_status" == "正常" && "$down_status" == "正常" ]] && is_ok=1
+        fi
+
+        if [ "$is_ok" -eq 1 ]; then
             ok_cnt=$(( ok_cnt + 1 ))
             sum_up=$(awk "BEGIN{printf \"%.4f\", $sum_up+$upload}")
             sum_dn=$(awk "BEGIN{printf \"%.4f\", $sum_dn+$download}")
@@ -461,8 +502,12 @@ run_stability_test() {
             avg_dn=0; avg_up=0; avg_la=0
         fi
 
+        # 限速模式下，上传状态仅供参考，用灰色显示
+        local up_color="$color"
+        [ "$use_dl_only" -eq 1 ] && up_color="${YELLOW}"
+
         screen="${YELLOW}[#${round}]${ENDC} ${PURPLE}${group}|${location}${ENDC}"
-        screen+="  ${CYAN}↑${ENDC}${upload}  ${color}${up_status}${ENDC}"
+        screen+="  ${CYAN}↑${ENDC}${upload}  ${up_color}${up_status}${ENDC}"
         screen+="  ${CYAN}↓${ENDC}${download}  ${color}${down_status}${ENDC}"
         screen+="  ${CYAN}↕${ENDC}${latency}  ${CYAN}ϟ${ENDC}${jitter}"
         screen+="  ${YELLOW}可用:${avail_pct}%(${ok_cnt}/${total_cnt})${ENDC}"
@@ -548,15 +593,28 @@ tc_set_limit() {
     [ "$(id -u)" = "0" ] || return
     local iface; iface=$(get_default_iface)
     [ -z "$iface" ] && return
-    tc qdisc del dev "$iface" root 2>/dev/null || true
+    tc qdisc del dev "$iface" root    2>/dev/null || true
+    tc qdisc del dev "$iface" ingress 2>/dev/null || true
+    ip link set dev ifb0 down         2>/dev/null || true
+    tc qdisc del dev ifb0 root        2>/dev/null || true
     local burst_kbit=$(( mbps * 1000 / 8 ))
     [ "$burst_kbit" -lt 16 ] && burst_kbit=16
-    tc qdisc add dev "$iface" root tbf rate "${mbps}mbit" burst "${burst_kbit}kb" latency 50ms 2>/dev/null \
-        && TC_IFACE="$iface"
+    tc qdisc add dev "$iface" root tbf rate "${mbps}mbit" burst "${burst_kbit}kb" latency 50ms 2>/dev/null
+    if modprobe ifb 2>/dev/null && ip link set dev ifb0 up 2>/dev/null; then
+        tc qdisc add dev "$iface" ingress 2>/dev/null || true
+        tc filter add dev "$iface" parent ffff: protocol ip u32 \
+            match u32 0 0 action mirred egress redirect dev ifb0 2>/dev/null \
+            && tc qdisc add dev ifb0 root tbf rate "${mbps}mbit" burst "${burst_kbit}kb" latency 50ms 2>/dev/null \
+            && TC_IFACE="$iface" && return
+    fi
+    TC_IFACE="$iface"
 }
 tc_clear_limit() {
-    [ -n "$TC_IFACE" ] && command -v tc >/dev/null 2>&1 && [ "$(id -u)" = "0" ] \
-        && tc qdisc del dev "$TC_IFACE" root 2>/dev/null || true
+    [ -n "$TC_IFACE" ] && command -v tc >/dev/null 2>&1 && [ "$(id -u)" = "0" ] || return
+    tc qdisc del dev "$TC_IFACE" root    2>/dev/null || true
+    tc qdisc del dev "$TC_IFACE" ingress 2>/dev/null || true
+    ip link set dev ifb0 down            2>/dev/null || true
+    tc qdisc del dev ifb0 root           2>/dev/null || true
     TC_IFACE=""
 }
 new_log_files() {
@@ -758,7 +816,7 @@ build_round_curve_data() {
       up=trim($7)+0; us=trim($8); dn=trim($9)+0; ds=trim($10);
       la=trim($11)+0; ji=trim($12)+0;
       if(!(r in rt)) rt[r]=substr(t,12,8);
-      if(us=="正常"&&ds=="正常"){
+      if(ds=="正常"){
         cnt[r]++; us2[r]+=up; ds2[r]+=dn; ls[r]+=la; js[r]+=ji;
       }
     }
@@ -781,7 +839,7 @@ generate_summary_report() {
       total++; rs[r]=1;
       if(st=="") st=t; et=t; gt[g]++;
       if(us=="失败"||ds=="失败"||us=="取消"||ds=="取消") fail++;
-      if(us=="正常"&&ds=="正常"){
+      if(ds=="正常"){
         success++; go[g]++;
         usum+=up; dsum+=dn; lsum+=la;
         usq+=up*up; dsq+=dn*dn; lsq+=la*la;
@@ -796,7 +854,7 @@ generate_summary_report() {
       print "═══════════ HyperSpeed Plus 分析报告 ═══════════";
       print "区间: "st" → "et;
       printf "样本: %d  轮次: %d\n", total, rn;
-      printf "双向可用率: %.2f%% (%d/%d)  失败/取消: %d\n",
+      printf "下载可用率: %.2f%% (%d/%d)  失败/取消: %d\n",
         total>0?success/total*100:0, success, total, fail;
       if(success>0){
         ua=usum/success; da=dsum/success; la2=lsum/success;
