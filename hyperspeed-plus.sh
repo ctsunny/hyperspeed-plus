@@ -9,7 +9,7 @@ CYAN='\033[0;36m'
 ENDC='\033[0m'
 
 SCRIPT_NAME='HyperSpeed Plus'
-SCRIPT_VERSION='6.3.0'
+SCRIPT_VERSION='6.4.0'
 BASE_DIR="${HOME}/.hyperspeed-plus"
 LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
@@ -155,7 +155,7 @@ ecs_install_speedtest() {
         local go_bit="$sys_bit"; [ "$go_bit" = "aarch64" ] && go_bit="arm64"
         local url3="https://github.com/showwin/speedtest-go/releases/download/v${Speedtest_Go_version}/speedtest-go_${Speedtest_Go_version}_Linux_${go_bit}.tar.gz"
         curl --fail -sL -m 30 -o /root/speedtest.tar.gz "${url3}" 2>/dev/null || \
-            curl --fail -sL -m 30 -o /root/speedtest.tar.gz "${cdn_success_url}${url3}" 2>/dev/null
+            [ -n "$cdn_success_url" ] && curl --fail -sL -m 30 -o /root/speedtest.tar.gz "${cdn_success_url}${url3}" 2>/dev/null
         if [ -f "/root/speedtest.tar.gz" ]; then
             tar -zxf /root/speedtest.tar.gz -C "${ECS_CLI_DIR}" && chmod 777 "${ECS_CLI_DIR}/speedtest-go"
             rm -f /root/speedtest.tar.gz
@@ -239,135 +239,10 @@ ecs_get_nearest_data() {
                 sorted_data+=("$(echo "$item"|cut -d',' -f1),$(echo "$item"|cut -d',' -f2)")
         done
     done
-    # 只返回最优 1 个
     echo "${sorted_data[0]:-}"
 }
 
-# ── 节点选择 ──────────────────────────────────────────────────────────────────
-
-show_nodes() {
-    echo
-    echo "可选测试地区/节点 (bimc 高精度节点):"
-    local i entry tool group location isp
-    for i in "${!NODES[@]}"; do
-        entry="${NODES[$i]}"
-        IFS='|' read -r tool group location isp _ _ _ <<< "$entry"
-        printf '  %02d. [%-5s] %-12s %-14s (%s)\n' "$((i+1))" "$tool" "$group" "$location" "$isp"
-    done
-    echo
-    echo "  --- 动态加载最优单节点 (ookla, 延迟最低1个) ---"
-    echo "  a.联通  b.电信  c.移动  d.香港  e.台湾  f.日本  g.新加坡"
-    echo "  n.三网就近(联通+电信+移动 各1个)"
-    echo
-    echo "输入示例: 1,2,a,b  |  all=全选(bimc+ookla各1)  |  ecs=三网就近各1"
-}
-
-select_nodes() {
-    local input
-    SELECTED_IDS=()
-    show_nodes
-
-    # 加载某个 URL 的最优 1 个节点，ping 失败则取列表第一个
-    _load_best_one() {
-        local url="$1" gname="$2"
-        echo -e "${CYAN}正在探测 ${gname} 最优节点...${ENDC}"
-        local best
-        best=$(ecs_get_nearest_data "$url")
-        if [ -z "$best" ]; then
-            echo -e "${YELLOW}${gname} ping 探测失败，改用列表第一个节点${ENDC}"
-            local all_list=()
-            all_list=($(ecs_get_data "$url"))
-            best="${all_list[0]:-}"
-        fi
-        if [ -z "$best" ]; then
-            echo -e "${YELLOW}${gname} 节点拉取失败，跳过${ENDC}"; return
-        fi
-        local sid; sid=$(echo "$best" | cut -d',' -f1)
-        local loc; loc=$(echo "$best" | cut -d',' -f2)
-        NODES+=("ookla|${gname}|${loc}|speedtest|${sid}||")
-        SELECTED_IDS+=("${#NODES[@]}")
-        echo -e "${GREEN}已加载 ${gname}: ${loc} (ID:${sid})${ENDC}"
-    }
-
-    _dispatch_letter() {
-        case "$1" in
-            a) _load_best_one "${SERVER_BASE_URL}/CN_Unicom.csv"  "联通" ;;
-            b) _load_best_one "${SERVER_BASE_URL}/CN_Telecom.csv" "电信" ;;
-            c) _load_best_one "${SERVER_BASE_URL}/CN_Mobile.csv"  "移动" ;;
-            d) _load_best_one "${SERVER_BASE_URL}/HK.csv"         "香港" ;;
-            e) _load_best_one "${SERVER_BASE_URL}/TW.csv"         "台湾" ;;
-            f) _load_best_one "${SERVER_BASE_URL}/JP.csv"         "日本" ;;
-            g) _load_best_one "${SERVER_BASE_URL}/SG.csv"         "新加坡" ;;
-            n) _load_best_one "${SERVER_BASE_URL}/CN_Unicom.csv"  "联通"
-               _load_best_one "${SERVER_BASE_URL}/CN_Telecom.csv" "电信"
-               _load_best_one "${SERVER_BASE_URL}/CN_Mobile.csv"  "移动" ;;
-            *) echo -e "${RED}未知字母: $1${ENDC}" ;;
-        esac
-    }
-
-    while true; do
-        read -r -p "请选择测试地区编号(多选): " input
-        input="${input// /}"
-
-        # all = 全选 bimc 5个 + ookla 各地区最优1个
-        if [[ -z "$input" || "$input" == "all" ]]; then
-            for token in "${!NODES[@]}"; do SELECTED_IDS+=("$((token+1))"); done
-            ecs_check_cdn_file
-            for _al in a b c d e f g; do _dispatch_letter "$_al"; done
-            break
-        fi
-
-        # ecs = 三网就近各1
-        if [[ "$input" == "ecs" ]]; then
-            ecs_check_cdn_file
-            _dispatch_letter "n"
-            [ ${#SELECTED_IDS[@]} -gt 0 ] && break
-            echo -e "${RED}节点加载失败，请重试${ENDC}"; continue
-        fi
-
-        IFS=',' read -r -a TOKENS <<< "$input"
-        local valid=1
-        for token in "${TOKENS[@]}"; do
-            [[ -n "$token" ]] || { valid=0; break; }
-            if [[ "$token" =~ ^[0-9]+$ ]]; then
-                local tn=$((10#$token))
-                (( tn < 1 || tn > ${#NODES[@]} )) && { valid=0; break; }
-            elif [[ "$token" =~ ^[abcdefgn]$ ]]; then
-                :
-            else
-                valid=0; break
-            fi
-        done
-        if (( valid == 0 )); then
-            echo -e "${RED}输入无效，请重新输入（数字选bimc，字母加载ookla最优节点）${ENDC}"; continue
-        fi
-
-        local cdn_checked=0
-        local letter_done=()
-        for token in "${TOKENS[@]}"; do
-            [[ "$token" =~ ^[abcdefgn]$ ]] || continue
-            array_contains "$token" "${letter_done[@]}" && continue
-            (( cdn_checked == 0 )) && { ecs_check_cdn_file; cdn_checked=1; }
-            _dispatch_letter "$token"
-            letter_done+=("$token")
-        done
-        for token in "${TOKENS[@]}"; do
-            [[ "$token" =~ ^[0-9]+$ ]] || continue
-            local tn=$((10#$token))
-            array_contains "$tn" "${SELECTED_IDS[@]}" || SELECTED_IDS+=("$tn")
-        done
-
-        [ ${#SELECTED_IDS[@]} -gt 0 ] && break
-        echo -e "${RED}未选择任何节点，请重新输入${ENDC}"
-    done
-
-    # 如有 ookla 节点，确保工具已安装
-    local has_ookla=0
-    for id in "${SELECTED_IDS[@]}"; do
-        [[ "${NODES[$((id-1))]}" == ookla* ]] && { has_ookla=1; break; }
-    done
-    (( has_ookla == 1 )) && ecs_install_speedtest
-}
+# ── 参数配置（节点选择之前完成）────────────────────────────────────────────────
 
 get_thread_option() {
     read -r -p "启用八线程测速? [y/N]: " ans
@@ -395,6 +270,141 @@ get_duration_option() {
     INTERVAL_SECONDS=$(awk "BEGIN{printf \"%d\", $INTERVAL_MINUTES*60}")
 }
 
+# ── 节点选择（放在最后，选完即自动启动）────────────────────────────────────────
+
+show_nodes() {
+    echo
+    echo "可选测试地区/节点 (bimc 高精度节点):"
+    local i entry tool group location isp
+    for i in "${!NODES[@]}"; do
+        entry="${NODES[$i]}"
+        IFS='|' read -r tool group location isp _ _ _ <<< "$entry"
+        printf '  %02d. [%-5s] %-12s %-14s (%s)\n' "$((i+1))" "$tool" "$group" "$location" "$isp"
+    done
+    echo
+    echo "  --- 动态加载最优单节点 (ookla, 延迟最低1个) ---"
+    echo "  a.联通  b.电信  c.移动  d.香港  e.台湾  f.日本  g.新加坡"
+    echo "  n.三网就近(联通+电信+移动 各1个)"
+    echo
+    echo "输入示例: 1,2,a,b  |  all=全选(bimc+ookla各1)  |  ecs=三网就近各1"
+}
+
+select_nodes() {
+    local input
+    SELECTED_IDS=()
+    show_nodes
+
+    _load_best_one() {
+        local url="$1" gname="$2"
+        echo -e "${CYAN}正在探测 ${gname} 最优节点...${ENDC}"
+        local best
+        best=$(ecs_get_nearest_data "$url")
+        if [ -z "$best" ]; then
+            echo -e "${YELLOW}${gname} ping 探测失败，改用列表第一个节点${ENDC}"
+            local all_list=()
+            all_list=($(ecs_get_data "$url"))
+            best="${all_list[0]:-}"
+        fi
+        if [ -z "$best" ]; then
+            echo -e "${YELLOW}${gname} 节点拉取失败，跳过${ENDC}"; return
+        fi
+        local sid; sid=$(echo "$best" | cut -d',' -f1)
+        local loc; loc=$(echo "$best" | cut -d',' -f2)
+        NODES+=("ookla|${gname}|${loc}|speedtest|${sid}||")
+        SELECTED_IDS+=("${#NODES[@]}")
+        echo -e "${GREEN}  ✓ ${gname}: ${loc} (ID:${sid})${ENDC}"
+    }
+
+    _dispatch_letter() {
+        case "$1" in
+            a) _load_best_one "${SERVER_BASE_URL}/CN_Unicom.csv"  "联通" ;;
+            b) _load_best_one "${SERVER_BASE_URL}/CN_Telecom.csv" "电信" ;;
+            c) _load_best_one "${SERVER_BASE_URL}/CN_Mobile.csv"  "移动" ;;
+            d) _load_best_one "${SERVER_BASE_URL}/HK.csv"         "香港" ;;
+            e) _load_best_one "${SERVER_BASE_URL}/TW.csv"         "台湾" ;;
+            f) _load_best_one "${SERVER_BASE_URL}/JP.csv"         "日本" ;;
+            g) _load_best_one "${SERVER_BASE_URL}/SG.csv"         "新加坡" ;;
+            n) _load_best_one "${SERVER_BASE_URL}/CN_Unicom.csv"  "联通"
+               _load_best_one "${SERVER_BASE_URL}/CN_Telecom.csv" "电信"
+               _load_best_one "${SERVER_BASE_URL}/CN_Mobile.csv"  "移动" ;;
+            *) echo -e "${RED}未知字母: $1${ENDC}" ;;
+        esac
+    }
+
+    while true; do
+        read -r -p "请选择测试节点: " input
+        input="${input// /}"
+
+        if [[ -z "$input" || "$input" == "all" ]]; then
+            for token in "${!NODES[@]}"; do SELECTED_IDS+=("$((token+1))"); done
+            ecs_check_cdn_file
+            for _al in a b c d e f g; do _dispatch_letter "$_al"; done
+            break
+        fi
+
+        if [[ "$input" == "ecs" ]]; then
+            ecs_check_cdn_file
+            _dispatch_letter "n"
+            [ ${#SELECTED_IDS[@]} -gt 0 ] && break
+            echo -e "${RED}节点加载失败，请重试${ENDC}"; continue
+        fi
+
+        IFS=',' read -r -a TOKENS <<< "$input"
+        local valid=1
+        for token in "${TOKENS[@]}"; do
+            [[ -n "$token" ]] || { valid=0; break; }
+            if [[ "$token" =~ ^[0-9]+$ ]]; then
+                local tn=$((10#$token))
+                (( tn < 1 || tn > ${#NODES[@]} )) && { valid=0; break; }
+            elif [[ "$token" =~ ^[abcdefgn]$ ]]; then
+                :
+            else
+                valid=0; break
+            fi
+        done
+        if (( valid == 0 )); then
+            echo -e "${RED}输入无效，请重新输入（数字=bimc 字母=ookla最优节点）${ENDC}"; continue
+        fi
+
+        local cdn_checked=0
+        local letter_done=()
+        for token in "${TOKENS[@]}"; do
+            [[ "$token" =~ ^[abcdefgn]$ ]] || continue
+            array_contains "$token" "${letter_done[@]}" && continue
+            (( cdn_checked == 0 )) && { ecs_check_cdn_file; cdn_checked=1; }
+            _dispatch_letter "$token"
+            letter_done+=("$token")
+        done
+        for token in "${TOKENS[@]}"; do
+            [[ "$token" =~ ^[0-9]+$ ]] || continue
+            local tn=$((10#$token))
+            array_contains "$tn" "${SELECTED_IDS[@]}" || SELECTED_IDS+=("$tn")
+        done
+
+        [ ${#SELECTED_IDS[@]} -gt 0 ] && break
+        echo -e "${RED}未选择任何节点，请重新输入${ENDC}"
+    done
+
+    # 如有 ookla 节点，确保工具已安装
+    local has_ookla=0
+    for id in "${SELECTED_IDS[@]}"; do
+        [[ "${NODES[$((id-1))]}" == ookla* ]] && { has_ookla=1; break; }
+    done
+    (( has_ookla == 1 )) && ecs_install_speedtest
+
+    # 汇总已选节点
+    echo
+    echo -e "${PURPLE}━━━━━━━━━━━━━━━━ 已选节点 ━━━━━━━━━━━━━━━━${ENDC}"
+    local id entry tool group location
+    for id in "${SELECTED_IDS[@]}"; do
+        entry="${NODES[$((id-1))]}"; IFS='|' read -r tool group location _ _ _ _ <<< "$entry"
+        echo -e "  ${GREEN}✓${ENDC} [${tool}] ${group} — ${location}"
+    done
+    echo -e "${PURPLE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${ENDC}"
+}
+
+# ── 日志 / 测速核心 ──────────────────────────────────────────────────────────
+
 new_log_files() {
     local ts; ts=$(date '+%Y%m%d-%H%M%S')
     LOG_FILE="${LOG_DIR}/hyperspeed-${ts}.log"
@@ -416,11 +426,9 @@ save_task_env() {
     printf 'INTERVAL_SECONDS=%q\n'   "$INTERVAL_SECONDS"   >> "$TASK_FILE"
     printf 'DURATION_HOURS=%q\n'     "$DURATION_HOURS"     >> "$TASK_FILE"
     printf 'INTERVAL_MINUTES=%q\n'   "$INTERVAL_MINUTES"   >> "$TASK_FILE"
-    # SELECTED_IDS
     printf 'SELECTED_IDS=(' >> "$TASK_FILE"
     local id; for id in "${SELECTED_IDS[@]}"; do printf '%q ' "$id" >> "$TASK_FILE"; done
     printf ')\n' >> "$TASK_FILE"
-    # NODES (序列化完整数组，含动态 ookla 节点)
     printf 'NODES=(\n' >> "$TASK_FILE"
     local node; for node in "${NODES[@]}"; do printf '%q\n' "$node" >> "$TASK_FILE"; done
     printf ')\n' >> "$TASK_FILE"
@@ -504,15 +512,9 @@ run_single_test() {
 
 run_test_plan() {
     new_log_files
-    local end_epoch=0 now round=1 sleep_seconds selected_text=""
-    local id entry tool group location
-    for id in "${SELECTED_IDS[@]}"; do
-        entry="${NODES[$((id-1))]}"; IFS='|' read -r tool group location _ _ _ _ <<< "$entry"
-        selected_text+="${group}-${location} "
-    done
+    local end_epoch=0 now round=1 sleep_seconds
     (( DURATION_SECONDS > 0 )) && end_epoch=$(( $(date +%s) + DURATION_SECONDS ))
     log_line "${CYAN}开始测试 日志:${LOG_FILE}${ENDC}" "开始测试 日志:${LOG_FILE}"
-    log_line "${CYAN}节点: ${selected_text}${ENDC}" "节点: ${selected_text}"
     while true; do
         log_line "${PURPLE}———— 第 ${round} 轮 ————${ENDC}" "———— 第 ${round} 轮 ————"
         for id in "${SELECTED_IDS[@]}"; do run_single_test "$id" "$round"; sleep 2; done
@@ -647,15 +649,9 @@ run_single_test() {
 run_test_plan() {
     trap 'rm -f "$PID_FILE"' EXIT
     new_log_files
-    local end_epoch=0 now round=1 sleep_seconds selected_text=""
-    local id entry tool group location
-    for id in "${SELECTED_IDS[@]}"; do
-        entry="${NODES[$((id-1))]}"; IFS='|' read -r tool group location _ _ _ _ <<< "$entry"
-        selected_text+="${group}-${location} "
-    done
+    local end_epoch=0 now round=1 sleep_seconds
     (( DURATION_SECONDS > 0 )) && end_epoch=$(( $(date +%s) + DURATION_SECONDS ))
     log_line "开始测试 日志:${LOG_FILE}" "开始测试 日志:${LOG_FILE}"
-    log_line "节点: ${selected_text}" "节点: ${selected_text}"
     while true; do
         log_line "———— 第 ${round} 轮 ————" "———— 第 ${round} 轮 ————"
         for id in "${SELECTED_IDS[@]}"; do run_single_test "$id" "$round"; sleep 2; done
@@ -676,12 +672,45 @@ WORKEREOF
     chmod +x "$WORKER_SCRIPT"
 }
 
+# ── 前台 / 后台启动 ───────────────────────────────────────────────────────────
+
+# 前台：设置好参数再选节点，选完立即开跑
+start_foreground_task() {
+    prepare_bimc
+    echo
+    echo -e "${CYAN}步骤 1/3  线程设置${ENDC}"
+    get_thread_option
+    echo
+    echo -e "${CYAN}步骤 2/3  时长设置${ENDC}"
+    get_duration_option
+    echo
+    echo -e "${CYAN}步骤 3/3  选择测试节点（选完自动开始）${ENDC}"
+    select_nodes
+    echo
+    echo -e "${GREEN}▶ 所有设置完成，测速即将开始...${ENDC}"
+    sleep 1
+    run_test_plan
+}
+
+# 后台：设置好参数再选节点，选完立即投入后台
 start_background_task() {
     if is_running; then
         echo -e "${YELLOW}已有后台任务运行中，PID: $(cat "$PID_FILE")${ENDC}"; return
     fi
-    prepare_bimc; select_nodes; get_thread_option; get_duration_option
-    save_task_env; write_worker_script
+    prepare_bimc
+    echo
+    echo -e "${CYAN}步骤 1/3  线程设置${ENDC}"
+    get_thread_option
+    echo
+    echo -e "${CYAN}步骤 2/3  时长设置${ENDC}"
+    get_duration_option
+    echo
+    echo -e "${CYAN}步骤 3/3  选择测试节点（选完自动启动后台）${ENDC}"
+    select_nodes
+    echo
+    echo -e "${GREEN}▶ 节点选择完成，正在启动后台任务...${ENDC}"
+    save_task_env
+    write_worker_script
     : > "$DAEMON_STDOUT"
     nohup bash "$WORKER_SCRIPT" >> "$DAEMON_STDOUT" 2>&1 &
     local pid=$!
@@ -689,10 +718,16 @@ start_background_task() {
     disown "$pid" 2>/dev/null || true
     sleep 4
     if kill -0 "$pid" 2>/dev/null; then
-        echo -e "${GREEN}后台任务已启动${ENDC}"
-        echo "PID: $pid | 工作脚本: $WORKER_SCRIPT"
-        echo "输出: $DAEMON_STDOUT"
-        echo "提示: 断开 SSH 也不会中断测速"
+        echo
+        echo -e "${GREEN}╔══════════════════════════════════════════╗${ENDC}"
+        echo -e "${GREEN}║  ✅  后台测速任务已成功启动              ║${ENDC}"
+        echo -e "${GREEN}║  PID: ${pid}                               ${ENDC}"
+        echo -e "${GREEN}║  现在可以安全断开 SSH，测速不会中断      ║${ENDC}"
+        echo -e "${GREEN}╠══════════════════════════════════════════╣${ENDC}"
+        echo -e "${GREEN}║  查看进度：主菜单选 3                    ║${ENDC}"
+        echo -e "${GREEN}║  停止任务：主菜单选 4                    ║${ENDC}"
+        echo -e "${GREEN}║  日志路径：${DAEMON_STDOUT}${ENDC}"
+        echo -e "${GREEN}╚══════════════════════════════════════════╝${ENDC}"
     else
         echo -e "${RED}后台任务启动失败，错误信息:${ENDC}"
         rm -f "$PID_FILE"
@@ -954,7 +989,7 @@ upload_latest_report() {
     echo -e "${GREEN}上传完成:${ENDC} $result"
 }
 
-# ── 选项12：独立三网/国际测速（单次，不记录压力日志）──────────────────────────
+# ── 选项12：独立单次三网测速 ──────────────────────────────────────────────────
 
 _ecs_run_list() {
     for item in "$@"; do
@@ -1040,7 +1075,7 @@ main_menu() {
         echo
         read -r -p "请选择: " menu
         case "$menu" in
-            1)  prepare_bimc; select_nodes; get_thread_option; get_duration_option; run_test_plan; pause_screen ;;
+            1)  start_foreground_task; pause_screen ;;
             2)  start_background_task; pause_screen ;;
             3)  show_status; pause_screen ;;
             4)  stop_background_task; pause_screen ;;
