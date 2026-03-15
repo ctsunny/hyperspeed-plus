@@ -10,20 +10,24 @@ BLUE='\033[0;34m'
 ENDC='\033[0m'
 
 SCRIPT_NAME='HyperSpeed Plus'
-SCRIPT_VERSION='5.0.0'
+SCRIPT_VERSION='5.1.0'
 BASE_DIR="${HOME}/.hyperspeed-plus"
 LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
 REPORT_DIR="${BASE_DIR}/reports"
 RUN_DIR="${BASE_DIR}/run"
+BIN_DIR="${BASE_DIR}/bin"
+SELF_PATH="${BIN_DIR}/hyperspeed-plus.sh"
 BINARY="${WORK_DIR}/bimc"
 THREAD_FLAG=''
 
 PID_FILE="${RUN_DIR}/hyperspeed.pid"
 TASK_FILE="${RUN_DIR}/task.env"
 DAEMON_STDOUT="${RUN_DIR}/daemon.out"
+LAST_LOG_FILE="${RUN_DIR}/last_log_path"
+LAST_CSV_FILE="${RUN_DIR}/last_csv_path"
 
-mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR"
+mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR" "$BIN_DIR"
 
 NODES=(
 '电信|上海|电信||aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQK|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkCg=='
@@ -58,7 +62,7 @@ download_file() {
 
 check_dependencies() {
     local missing=()
-    for cmd in base64 awk sed date sort head tail tr find basename dirname tar ps kill; do
+    for cmd in base64 awk sed date sort head tail tr find basename dirname tar ps kill chmod cp cat; do
         command_exists "$cmd" || missing+=("$cmd")
     done
     if ! command_exists curl && ! command_exists wget; then
@@ -68,6 +72,20 @@ check_dependencies() {
         echo -e "${RED}缺少依赖: ${missing[*]}${ENDC}"
         exit 1
     fi
+}
+
+ensure_self_copy() {
+    local src="$0"
+    if [ -r "$src" ]; then
+        cat "$src" > "$SELF_PATH" && chmod +x "$SELF_PATH"
+        return 0
+    fi
+    if [ -r "$SELF_PATH" ]; then
+        chmod +x "$SELF_PATH"
+        return 0
+    fi
+    echo -e "${RED}无法创建本地脚本副本，后台模式不可用${ENDC}"
+    return 1
 }
 
 prepare_bimc() {
@@ -202,6 +220,8 @@ new_log_files() {
     LOG_FILE="${LOG_DIR}/hyperspeed-${ts}.log"
     CSV_FILE="${LOG_DIR}/hyperspeed-${ts}.csv"
     printf 'time,round,group,location,isp,node_name,upload_mbps,upload_status,download_mbps,download_status,latency_ms,jitter_ms\n' > "$CSV_FILE"
+    echo "$LOG_FILE" > "$LAST_LOG_FILE"
+    echo "$CSV_FILE" > "$LAST_CSV_FILE"
 }
 
 log_line() {
@@ -352,19 +372,30 @@ start_background_task() {
         return
     fi
 
+    ensure_self_copy || return
     prepare_bimc
     select_nodes
     get_thread_option
     get_duration_option
     save_task_env
 
-    nohup bash "$0" --daemon-run > "$DAEMON_STDOUT" 2>&1 &
-    echo $! > "$PID_FILE"
+    : > "$DAEMON_STDOUT"
+    nohup bash "$SELF_PATH" --daemon-run >> "$DAEMON_STDOUT" 2>&1 &
+    local pid=$!
+    echo "$pid" > "$PID_FILE"
+    sleep 2
 
-    echo -e "${GREEN}后台任务已启动${ENDC}"
-    echo "PID: $(cat "$PID_FILE")"
-    echo "后台输出: $DAEMON_STDOUT"
-    echo "提示: 现在断开 SSH 也不会中断测速"
+    if ps -p "$pid" >/dev/null 2>&1; then
+        echo -e "${GREEN}后台任务已启动${ENDC}"
+        echo "PID: $pid"
+        echo "后台输出: $DAEMON_STDOUT"
+        echo "本地脚本副本: $SELF_PATH"
+        echo "提示: 现在断开 SSH 也不会中断测速"
+    else
+        echo -e "${RED}后台任务启动失败${ENDC}"
+        rm -f "$PID_FILE"
+        [ -f "$DAEMON_STDOUT" ] && tail -n 50 "$DAEMON_STDOUT"
+    fi
 }
 
 daemon_run() {
@@ -378,13 +409,16 @@ show_status() {
         local pid
         pid=$(cat "$PID_FILE")
         echo -e "${GREEN}后台测速正在运行${ENDC}"
-        echo "PID: $pid"
-        echo "任务配置: $TASK_FILE"
+        ps -p "$pid" -o pid,etime,cmd
+        echo
+        [ -f "$LAST_LOG_FILE" ] && echo "当前日志: $(cat "$LAST_LOG_FILE" 2>/dev/null)"
+        [ -f "$LAST_CSV_FILE" ] && echo "当前CSV: $(cat "$LAST_CSV_FILE" 2>/dev/null)"
         echo "后台输出: $DAEMON_STDOUT"
         echo
         [ -f "$DAEMON_STDOUT" ] && tail -n 20 "$DAEMON_STDOUT"
     else
         echo -e "${YELLOW}当前没有后台测速任务${ENDC}"
+        [ -f "$DAEMON_STDOUT" ] && { echo; echo "最近后台输出:"; tail -n 20 "$DAEMON_STDOUT"; }
     fi
 }
 
@@ -436,7 +470,7 @@ list_csvs() {
 }
 
 list_reports() {
-    mapfile -t REPORT_FILES < <(find "$REPORT_DIR" -maxdepth 1 -type f \( -name '*.html' -o -name '*.txt' -o -name '*.svg' -o -name '*.tar.gz' \) | sort -r)
+    mapfile -t REPORT_FILES < <(find "$REPORT_DIR" -maxdepth 1 -type f \( -name '*.html' -o -name '*.txt' -o -name '*.svg' -o -name '*.tar.gz' -o -name '*.csv' \) | sort -r)
     if [ ${#REPORT_FILES[@]} -eq 0 ]; then
         echo -e "${YELLOW}暂无报告${ENDC}"
         return 1
@@ -500,46 +534,34 @@ generate_summary_report() {
     local out_file="$2"
     awk -F',' '
     function trim(s) { gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", s); return s }
-    BEGIN {
-        total=0; success=0; up_ok=0; down_ok=0; fail=0; cancel=0; broken=0; both_zero=0;
-    }
+    BEGIN { total=0; success=0; up_ok=0; down_ok=0; fail=0; cancel=0; broken=0; both_zero=0; }
     NR==1 { next }
     {
         time=trim($1); round=trim($2); group=trim($3); node=trim($6);
         up=trim($7)+0; up_status=trim($8); down=trim($9)+0; down_status=trim($10); lat=trim($11)+0; jit=trim($12)+0;
-        total++;
-        round_seen[round]=1;
-        if (start_time=="") start_time=time;
-        end_time=time;
-        group_total[group]++;
-        node_key=group "|" node;
-        node_total[node_key]++;
-
+        total++; round_seen[round]=1;
+        if (start_time=="") start_time=time; end_time=time;
+        group_total[group]++; node_key=group "|" node; node_total[node_key]++;
         if (up_status=="正常") up_ok++;
         if (down_status=="正常") down_ok++;
         if (up_status=="失败" || down_status=="失败") fail++;
         if (up_status=="取消" || down_status=="取消") cancel++;
         if (up_status=="断流" || down_status=="断流") broken++;
         if (up==0 && down==0) both_zero++;
-
         if (up_status=="正常" && down_status=="正常") {
-            success++;
-            group_ok[group]++;
-            node_ok[node_key]++;
+            success++; group_ok[group]++; node_ok[node_key]++;
             up_sum+=up; down_sum+=down; lat_sum+=lat; jit_sum+=jit;
             up_sq+=up*up; down_sq+=down*down; lat_sq+=lat*lat; jit_sq+=jit*jit;
             if (best_down=="" || down>best_down_val) { best_down=node_key; best_down_val=down; }
             if (best_up=="" || up>best_up_val) { best_up=node_key; best_up_val=up; }
             if (best_lat=="" || lat<best_lat_val) { best_lat=node_key; best_lat_val=lat; }
             if (best_jit=="" || jit<best_jit_val) { best_jit=node_key; best_jit_val=jit; }
-
             node_up_sum[node_key]+=up; node_down_sum[node_key]+=down; node_lat_sum[node_key]+=lat; node_jit_sum[node_key]+=jit; node_dual_ok[node_key]++;
             group_up_sum[group]+=up; group_down_sum[group]+=down; group_lat_sum[group]+=lat; group_jit_sum[group]+=jit; group_dual_ok[group]++;
         }
     }
     END {
-        rounds=0;
-        for (r in round_seen) rounds++;
+        rounds=0; for (r in round_seen) rounds++;
         dual_rate = total>0 ? success/total*100 : 0;
         up_rate = total>0 ? up_ok/total*100 : 0;
         down_rate = total>0 ? down_ok/total*100 : 0;
@@ -547,7 +569,6 @@ generate_summary_report() {
         cancel_rate = total>0 ? cancel/total*100 : 0;
         broken_rate = total>0 ? broken/total*100 : 0;
         zero_rate = total>0 ? both_zero/total*100 : 0;
-
         print "———————————————— 专业分析报告 ————————————————";
         print "测试区间: " start_time "  ->  " end_time;
         print "样本总数: " total;
@@ -556,17 +577,12 @@ generate_summary_report() {
         printf "上传可用率: %.2f%% (%d/%d)\n", up_rate, up_ok, total;
         printf "下载可用率: %.2f%% (%d/%d)\n", down_rate, down_ok, total;
         printf "失败占比: %.2f%% | 取消占比: %.2f%% | 断流占比: %.2f%% | 零速占比: %.2f%%\n", fail_rate, cancel_rate, broken_rate, zero_rate;
-
         if (success > 0) {
-            up_avg = up_sum/success;
-            down_avg = down_sum/success;
-            lat_avg = lat_sum/success;
-            jit_avg = jit_sum/success;
+            up_avg = up_sum/success; down_avg = down_sum/success; lat_avg = lat_sum/success; jit_avg = jit_sum/success;
             up_sd = sqrt((up_sq/success) - (up_avg*up_avg)); if (up_sd<0) up_sd=0;
             down_sd = sqrt((down_sq/success) - (down_avg*down_avg)); if (down_sd<0) down_sd=0;
             lat_sd = sqrt((lat_sq/success) - (lat_avg*lat_avg)); if (lat_sd<0) lat_sd=0;
             jit_sd = sqrt((jit_sq/success) - (jit_avg*jit_avg)); if (jit_sd<0) jit_sd=0;
-
             print "";
             print "可用样本统计(仅双向正常):";
             printf "- 平均上传: %.2f Mbps，波动: %.2f Mbps\n", up_avg, up_sd;
@@ -577,32 +593,10 @@ generate_summary_report() {
             printf "- 峰值下载: %.2f Mbps (%s)\n", best_down_val, best_down;
             printf "- 最低延迟: %.2f ms (%s)\n", best_lat_val, best_lat;
             printf "- 最低抖动: %.2f ms (%s)\n", best_jit_val, best_jit;
-
-            print "";
-            print "线路判断:";
-            if (down_avg >= 80 && lat_avg <= 160 && jit_avg <= 8) {
-                print "- 综合评价: 质量较好，适合持续跑带宽类业务。";
-            } else if (down_avg >= 40 && lat_avg <= 200) {
-                print "- 综合评价: 线路可用，适合常规业务，高峰时段需继续观察。";
-            } else {
-                print "- 综合评价: 线路存在明显短板，建议延长压测并观察曲线尾部波动。";
-            }
-            if (down_sd > (down_avg * 0.25)) {
-                print "- 下载波动偏大，说明带宽稳定性一般。";
-            }
-            if (lat_sd > 20) {
-                print "- 延迟波动明显，实时交互业务可能受影响。";
-            }
-            if (jit_avg > 10) {
-                print "- 平均抖动偏高，建议结合更长时段观察拥塞情况。";
-            }
         } else {
-            print "";
-            print "可用样本统计: 暂无双向正常样本。";
+            print ""; print "可用样本统计: 暂无双向正常样本。";
         }
-
-        print "";
-        print "分组画像:";
+        print ""; print "分组画像:";
         for (g in group_total) {
             rate=(group_ok[g]+0)/group_total[g]*100;
             printf "- %s: 双向可用率 %.2f%% (%d/%d)", g, rate, group_ok[g]+0, group_total[g];
@@ -611,9 +605,7 @@ generate_summary_report() {
             }
             printf "\n";
         }
-
-        print "";
-        print "节点画像:";
+        print ""; print "节点画像:";
         for (n in node_total) {
             rate=(node_ok[n]+0)/node_total[n]*100;
             printf "- %s: 双向可用率 %.2f%% (%d/%d)", n, rate, node_ok[n]+0, node_total[n];
@@ -627,22 +619,11 @@ generate_summary_report() {
 }
 
 generate_speed_svg() {
-    local data_file="$1"
-    local out_svg="$2"
+    local data_file="$1" out_svg="$2"
     awk -F',' '
-    BEGIN {
-        width=1280; height=480; left=80; right=40; top=40; bottom=70;
-        plotW=width-left-right; plotH=height-top-bottom; n=0; maxV=0;
-    }
+    BEGIN { width=1280; height=480; left=80; right=40; top=40; bottom=70; plotW=width-left-right; plotH=height-top-bottom; n=0; maxV=0; }
     NR==1 { next }
-    {
-        n++;
-        label[n]=$2;
-        up[n]=$3+0;
-        down[n]=$4+0;
-        if (up[n] > maxV) maxV=up[n];
-        if (down[n] > maxV) maxV=down[n];
-    }
+    { n++; label[n]=$2; up[n]=$3+0; down[n]=$4+0; if (up[n] > maxV) maxV=up[n]; if (down[n] > maxV) maxV=down[n]; }
     END {
         if (maxV <= 0) maxV=1;
         print "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" width "\" height=\"" height "\" viewBox=\"0 0 " width " " height "\">";
@@ -650,28 +631,11 @@ generate_speed_svg() {
         print "<text x=\"40\" y=\"28\" fill=\"#e5e7eb\" font-size=\"22\" font-family=\"Arial\">速度曲线（按轮次平均）</text>";
         print "<line x1=\"" left "\" y1=\"" top "\" x2=\"" left "\" y2=\"" top+plotH "\" stroke=\"#94a3b8\" stroke-width=\"1\"/>";
         print "<line x1=\"" left "\" y1=\"" top+plotH "\" x2=\"" left+plotW "\" y2=\"" top+plotH "\" stroke=\"#94a3b8\" stroke-width=\"1\"/>";
-        for (i=0; i<=4; i++) {
-            y=top+plotH-(plotH*i/4);
-            v=maxV*i/4;
-            print "<line x1=\"" left "\" y1=\"" y "\" x2=\"" left+plotW "\" y2=\"" y "\" stroke=\"#1f2937\" stroke-width=\"1\"/>";
-            printf "<text x=\"18\" y=\"%.2f\" fill=\"#cbd5e1\" font-size=\"12\" font-family=\"Arial\">%.0f</text>\n", y+4, v;
-        }
-        if (n == 0) {
-            print "<text x=\"140\" y=\"240\" fill=\"#fbbf24\" font-size=\"22\" font-family=\"Arial\">暂无双向正常样本，无法生成速度曲线</text></svg>";
-            exit;
-        }
+        for (i=0; i<=4; i++) { y=top+plotH-(plotH*i/4); v=maxV*i/4; print "<line x1=\"" left "\" y1=\"" y "\" x2=\"" left+plotW "\" y2=\"" y "\" stroke=\"#1f2937\" stroke-width=\"1\"/>"; }
+        if (n == 0) { print "<text x=\"140\" y=\"240\" fill=\"#fbbf24\" font-size=\"22\" font-family=\"Arial\">暂无双向正常样本，无法生成速度曲线</text></svg>"; exit; }
         if (n == 1) step=0; else step=plotW/(n-1);
         upPts=""; downPts="";
-        for (i=1; i<=n; i++) {
-            x=left+(i-1)*step;
-            yu=top+plotH-(up[i]/maxV*plotH);
-            yd=top+plotH-(down[i]/maxV*plotH);
-            upPts=upPts sprintf("%.2f,%.2f ", x, yu);
-            downPts=downPts sprintf("%.2f,%.2f ", x, yd);
-            print "<circle cx=\"" x "\" cy=\"" yu "\" r=\"4\" fill=\"#38bdf8\"/>";
-            print "<circle cx=\"" x "\" cy=\"" yd "\" r=\"4\" fill=\"#22c55e\"/>";
-            printf "<text x=\"%.2f\" y=\"%d\" fill=\"#cbd5e1\" font-size=\"11\" font-family=\"Arial\" text-anchor=\"middle\">%s</text>\n", x, top+plotH+22, label[i];
-        }
+        for (i=1; i<=n; i++) { x=left+(i-1)*step; yu=top+plotH-(up[i]/maxV*plotH); yd=top+plotH-(down[i]/maxV*plotH); upPts=upPts sprintf("%.2f,%.2f ", x, yu); downPts=downPts sprintf("%.2f,%.2f ", x, yd); }
         print "<polyline fill=\"none\" stroke=\"#38bdf8\" stroke-width=\"3\" points=\"" upPts "\"/>";
         print "<polyline fill=\"none\" stroke=\"#22c55e\" stroke-width=\"3\" points=\"" downPts "\"/>";
         print "</svg>";
@@ -679,51 +643,20 @@ generate_speed_svg() {
 }
 
 generate_latency_svg() {
-    local data_file="$1"
-    local out_svg="$2"
+    local data_file="$1" out_svg="$2"
     awk -F',' '
-    BEGIN {
-        width=1280; height=480; left=80; right=40; top=40; bottom=70;
-        plotW=width-left-right; plotH=height-top-bottom; n=0; maxV=0;
-    }
+    BEGIN { width=1280; height=480; left=80; right=40; top=40; bottom=70; plotW=width-left-right; plotH=height-top-bottom; n=0; maxV=0; }
     NR==1 { next }
-    {
-        n++;
-        label[n]=$2;
-        lat[n]=$5+0;
-        jit[n]=$6+0;
-        if (lat[n] > maxV) maxV=lat[n];
-        if (jit[n] > maxV) maxV=jit[n];
-    }
+    { n++; label[n]=$2; lat[n]=$5+0; jit[n]=$6+0; if (lat[n] > maxV) maxV=lat[n]; if (jit[n] > maxV) maxV=jit[n]; }
     END {
         if (maxV <= 0) maxV=1;
         print "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" width "\" height=\"" height "\" viewBox=\"0 0 " width " " height "\">";
         print "<rect width=\"100%\" height=\"100%\" fill=\"#0f172a\"/>";
         print "<text x=\"40\" y=\"28\" fill=\"#e5e7eb\" font-size=\"22\" font-family=\"Arial\">延迟曲线（按轮次平均）</text>";
-        print "<line x1=\"" left "\" y1=\"" top "\" x2=\"" left "\" y2=\"" top+plotH "\" stroke=\"#94a3b8\" stroke-width=\"1\"/>";
-        print "<line x1=\"" left "\" y1=\"" top+plotH "\" x2=\"" left+plotW "\" y2=\"" top+plotH "\" stroke=\"#94a3b8\" stroke-width=\"1\"/>";
-        for (i=0; i<=4; i++) {
-            y=top+plotH-(plotH*i/4);
-            v=maxV*i/4;
-            print "<line x1=\"" left "\" y1=\"" y "\" x2=\"" left+plotW "\" y2=\"" y "\" stroke=\"#1f2937\" stroke-width=\"1\"/>";
-            printf "<text x=\"18\" y=\"%.2f\" fill=\"#cbd5e1\" font-size=\"12\" font-family=\"Arial\">%.0f</text>\n", y+4, v;
-        }
-        if (n == 0) {
-            print "<text x=\"140\" y=\"240\" fill=\"#fbbf24\" font-size=\"22\" font-family=\"Arial\">暂无双向正常样本，无法生成延迟曲线</text></svg>";
-            exit;
-        }
-        if (n == 1) step=0; else step=plotW/(n-1);
+        if (n == 0) { print "<text x=\"140\" y=\"240\" fill=\"#fbbf24\" font-size=\"22\" font-family=\"Arial\">暂无双向正常样本，无法生成延迟曲线</text></svg>"; exit; }
+        if (n == 1) step=0; else step=(width-left-right)/(n-1);
         latPts=""; jitPts="";
-        for (i=1; i<=n; i++) {
-            x=left+(i-1)*step;
-            yl=top+plotH-(lat[i]/maxV*plotH);
-            yj=top+plotH-(jit[i]/maxV*plotH);
-            latPts=latPts sprintf("%.2f,%.2f ", x, yl);
-            jitPts=jitPts sprintf("%.2f,%.2f ", x, yj);
-            print "<circle cx=\"" x "\" cy=\"" yl "\" r=\"4\" fill=\"#f59e0b\"/>";
-            print "<circle cx=\"" x "\" cy=\"" yj "\" r=\"4\" fill=\"#a855f7\"/>";
-            printf "<text x=\"%.2f\" y=\"%d\" fill=\"#cbd5e1\" font-size=\"11\" font-family=\"Arial\" text-anchor=\"middle\">%s</text>\n", x, top+plotH+22, label[i];
-        }
+        for (i=1; i<=n; i++) { x=left+(i-1)*step; yl=top+plotH-(lat[i]/maxV*plotH); yj=top+plotH-(jit[i]/maxV*plotH); latPts=latPts sprintf("%.2f,%.2f ", x, yl); jitPts=jitPts sprintf("%.2f,%.2f ", x, yj); }
         print "<polyline fill=\"none\" stroke=\"#f59e0b\" stroke-width=\"3\" points=\"" latPts "\"/>";
         print "<polyline fill=\"none\" stroke=\"#a855f7\" stroke-width=\"3\" points=\"" jitPts "\"/>";
         print "</svg>";
@@ -731,52 +664,16 @@ generate_latency_svg() {
 }
 
 generate_html_report() {
-    local summary_file="$1"
-    local speed_svg="$2"
-    local latency_svg="$3"
-    local out_html="$4"
+    local summary_file="$1" speed_svg="$2" latency_svg="$3" out_html="$4"
     local summary_name speed_name latency_name
     summary_name=$(basename "$summary_file")
     speed_name=$(basename "$speed_svg")
     latency_name=$(basename "$latency_svg")
     cat > "$out_html" <<EOF
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HyperSpeed Plus 报告</title>
-<style>
-body{background:#020617;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif;margin:0;padding:24px}
-.wrap{max-width:1320px;margin:0 auto}
-.card{background:#111827;border:1px solid #1f2937;border-radius:16px;padding:20px;margin-bottom:20px}
-pre{white-space:pre-wrap;line-height:1.65;font-size:14px;color:#e5e7eb}
-img{width:100%;height:auto;background:#0b1220;border-radius:12px;border:1px solid #1f2937}
-h1,h2{margin-top:0}
-a{color:#7dd3fc}
-</style>
-</head>
-<body>
-<div class="wrap">
-<div class="card">
-<h1>HyperSpeed Plus 分析报告</h1>
-<p>同目录文件：<a href="${summary_name}">${summary_name}</a>、<a href="${speed_name}">${speed_name}</a>、<a href="${latency_name}">${latency_name}</a></p>
-</div>
-<div class="card">
-<h2>文字分析</h2>
-<pre>$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "$summary_file")</pre>
-</div>
-<div class="card">
-<h2>速度曲线</h2>
-<img src="${speed_name}" alt="速度曲线">
-</div>
-<div class="card">
-<h2>延迟曲线</h2>
-<img src="${latency_name}" alt="延迟曲线">
-</div>
-</div>
-</body>
-</html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>HyperSpeed Plus 报告</title>
+<style>body{background:#020617;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif;margin:0;padding:24px}.wrap{max-width:1320px;margin:0 auto}.card{background:#111827;border:1px solid #1f2937;border-radius:16px;padding:20px;margin-bottom:20px}pre{white-space:pre-wrap;line-height:1.65;font-size:14px;color:#e5e7eb}img{width:100%;height:auto;background:#0b1220;border-radius:12px;border:1px solid #1f2937}a{color:#7dd3fc}</style></head>
+<body><div class="wrap"><div class="card"><h1>HyperSpeed Plus 分析报告</h1><p><a href="${summary_name}">${summary_name}</a> | <a href="${speed_name}">${speed_name}</a> | <a href="${latency_name}">${latency_name}</a></p></div><div class="card"><pre>$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "$summary_file")</pre></div><div class="card"><img src="${speed_name}" alt="速度曲线"></div><div class="card"><img src="${latency_name}" alt="延迟曲线"></div></div></body></html>
 EOF
 }
 
@@ -786,7 +683,6 @@ analyze_csv_file() {
         echo -e "${RED}CSV文件不存在${ENDC}"
         return 1
     fi
-
     local base_name round_data summary_txt speed_svg latency_svg report_html
     base_name=$(basename "$csv_file" .csv)
     round_data="${REPORT_DIR}/${base_name}-rounds.csv"
@@ -794,13 +690,11 @@ analyze_csv_file() {
     speed_svg="${REPORT_DIR}/${base_name}-speed.svg"
     latency_svg="${REPORT_DIR}/${base_name}-latency.svg"
     report_html="${REPORT_DIR}/${base_name}-report.html"
-
     build_round_curve_data "$csv_file" "$round_data"
     generate_summary_report "$csv_file" "$summary_txt"
     generate_speed_svg "$round_data" "$speed_svg"
     generate_latency_svg "$round_data" "$latency_svg"
     generate_html_report "$summary_txt" "$speed_svg" "$latency_svg" "$report_html"
-
     sed -n '1,220p' "$summary_txt"
     echo
     echo -e "${GREEN}速度曲线:${ENDC} ${speed_svg}"
@@ -834,19 +728,11 @@ pack_latest_report() {
         echo -e "${YELLOW}暂无报告，请先执行分析${ENDC}"
         return 1
     fi
-
     local html base tarfile
     html="${HTMLS[0]}"
     base=$(basename "$html" -report.html)
     tarfile="${REPORT_DIR}/${base}-report-pack.tar.gz"
-
-    tar -C "$REPORT_DIR" -czf "$tarfile" \
-        "${base}-report.html" \
-        "${base}-summary.txt" \
-        "${base}-speed.svg" \
-        "${base}-latency.svg" \
-        "${base}-rounds.csv" 2>/dev/null
-
+    tar -C "$REPORT_DIR" -czf "$tarfile" "${base}-report.html" "${base}-summary.txt" "${base}-speed.svg" "${base}-latency.svg" "${base}-rounds.csv" 2>/dev/null
     echo "$tarfile"
 }
 
@@ -856,8 +742,7 @@ upload_catbox() {
 }
 
 upload_transfer_sh() {
-    local file="$1"
-    local name
+    local file="$1" name
     name=$(basename "$file")
     curl -fsSL --upload-file "$file" "https://transfer.sh/${name}"
 }
@@ -870,31 +755,19 @@ upload_tmpfiles() {
 upload_latest_report() {
     local tarfile method result
     tarfile=$(pack_latest_report) || return
-
     echo "准备上传: $tarfile"
     echo "1. Catbox"
     echo "2. transfer.sh"
     echo "3. tmpfiles.org"
     read -r -p "选择上传方式(默认1): " method
     method="${method:-1}"
-
     case "$method" in
-        1)
-            result=$(upload_catbox "$tarfile")
-            echo -e "${GREEN}上传完成:${ENDC} $result"
-            ;;
-        2)
-            result=$(upload_transfer_sh "$tarfile")
-            echo -e "${GREEN}上传完成:${ENDC} $result"
-            ;;
-        3)
-            result=$(upload_tmpfiles "$tarfile")
-            echo -e "${GREEN}上传完成:${ENDC} $result"
-            ;;
-        *)
-            echo -e "${RED}无效选项${ENDC}"
-            ;;
+        1) result=$(upload_catbox "$tarfile") ;;
+        2) result=$(upload_transfer_sh "$tarfile") ;;
+        3) result=$(upload_tmpfiles "$tarfile") ;;
+        *) echo -e "${RED}无效选项${ENDC}"; return ;;
     esac
+    echo -e "${GREEN}上传完成:${ENDC} $result"
 }
 
 main_menu() {
