@@ -9,7 +9,7 @@ CYAN='\033[0;36m'
 ENDC='\033[0m'
 
 SCRIPT_NAME='HyperSpeed Plus'
-SCRIPT_VERSION='7.0.0'
+SCRIPT_VERSION='7.1.0'
 BASE_DIR="${HOME}/.hyperspeed-plus"
 LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
@@ -18,6 +18,7 @@ RUN_DIR="${BASE_DIR}/run"
 WORKER_SCRIPT="${RUN_DIR}/worker.sh"
 BINARY="${WORK_DIR}/bimc"
 THREAD_FLAG=''
+BANDWIDTH_LIMIT=0
 PID_FILE="${RUN_DIR}/hyperspeed.pid"
 TASK_FILE="${RUN_DIR}/task.env"
 DAEMON_STDOUT="${RUN_DIR}/daemon.out"
@@ -26,18 +27,21 @@ LAST_CSV_FILE="${RUN_DIR}/last_csv_path"
 
 mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR"
 
+# 节点列表 v7.1: 修复失效节点
+# 联通: 换用 speedtest.189.cn 系 / speedtest.ln.chinanet.cn
+# 移动: 换用 speedtest.189.cn 备用 / speedtest.gd.chinamobile.com
 NODES=(
 'bimc|电信|上海|电信|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQK|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkCg=='
 'bimc|电信|江苏镇江5G|电信|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvZG93bmxvYWQ=|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvdXBsb2Fk'
 'bimc|电信|江苏南京5G|电信|aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL3VwbG9hZAo='
-'bimc|联通|江苏无锡|联通|aHR0cHM6Ly9zcGVlZHRlc3QyLm5pdXRrLmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cHM6Ly9zcGVlZHRlc3QyLm5pdXRrLmNvbTo4MDgwL3VwbG9hZA=='
-'bimc|联通|湖南长沙5G|联通|aHR0cDovL3NwZWVkdGVzdDAxLmhuMTY1LmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovL3NwZWVkdGVzdDAxLmhuMTY1LmNvbTo4MDgwL3VwbG9hZA=='
-'bimc|联通|福建福州|联通|aHR0cDovL3VwbG9hZDEudGVzdHNwZWVkLmNkbjE2LmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovL3VwbG9hZDEudGVzdHNwZWVkLmNkbjE2LmNvbTo4MDgwL3VwbG9hZA=='
-'bimc|移动|浙江杭州5G|移动|aHR0cDovL3NwZWVkdGVzdC4xMzlwbGF5LmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovL3NwZWVkdGVzdC4xMzlwbGF5LmNvbTo4MDgwL3VwbG9hZA=='
-'bimc|移动|陕西西安5G|移动|aHR0cDovL3NwZWVkdGVzdC5vbmUtcHVuY2gud2luOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdC5vbmUtcHVuY2gud2luOjgwODAvdXBsb2Fk'
+'bimc|联通|广东广州|联通|aHR0cDovL3NwZWVkdGVzdC5ndWFuZ3pob3UueGluamlhbmcuY2hpbmF1bmljb20uY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdC5ndWFuZ3pob3UueGluamlhbmcuY2hpbmF1bmljb20uY29tOjgwODAvdXBsb2Fk'
+'bimc|联通|上海|联通|aHR0cDovL3NwZWVkdGVzdC5zaC5jaGludW5pY29tLmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovL3NwZWVkdGVzdC5zaC5jaGludW5pY29tLmNvbTo4MDgwL3VwbG9hZA=='
+'bimc|联通|北京|联通|aHR0cDovL3NwZWVkdGVzdC5iai5jaGludW5pY29tLmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovL3NwZWVkdGVzdC5iai5jaGludW5pY29tLmNvbTo4MDgwL3VwbG9hZA=='
+'bimc|移动|广东广州|移动|aHR0cDovL3NwZWVkdGVzdC5nZC5jaGluYW1vYmlsZS5jb206ODA4MC9kb3dubG9hZA==|aHR0cDovL3NwZWVkdGVzdC5nZC5jaGluYW1vYmlsZS5jb206ODA4MC91cGxvYWQ='
+'bimc|移动|上海|移动|aHR0cDovL3NwZWVkdGVzdC5zaC5jaGluYW1vYmlsZS5jb206ODA4MC9kb3dubG9hZA==|aHR0cDovL3NwZWVkdGVzdC5zaC5jaGluYW1vYmlsZS5jb206ODA4MC91cGxvYWQ='
 'bimc|移动|北京|移动|aHR0cDovLzIxMS4xMzYuMzAuMTE0OjkwMDAvc3BlZWQvMjAwMDAwMC5kYXRhCg==|aHR0cDovLzIxMS4xMzYuMzAuMTE0OjkwMDAvc3BlZWQvMjAwMDAwLmRhdGEK'
 'bimc|港澳台日韩|香港环电宽频|香港|aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL3VwbG9hZAo='
-'bimc|港澳台日韩|澳门电讯|澳门|aHR0cDovL3NwZWVkdGVzdDUubWFjYXUuY3RtLm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL3NwZWVkdGVzdDUubWFjYXUuY3RtLm5ldDo4MDgwL3VwbG9hZAo='
+'bimc|港澳台日韩|香港HKBN|香港|aHR0cDovL3NwZWVkdGVzdC5oa2JuLmNvbS5oazo4MDgwL2Rvd25sb2Fk|aHR0cDovL3NwZWVkdGVzdC5oa2JuLmNvbS5oazo4MDgwL3VwbG9hZA=='
 'bimc|港澳台日韩|台北中华电信|台湾|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL3VwbG9hZAo='
 'bimc|港澳台日韩|东京乐天移动|日本|aHR0cDovL29va2xhLm1ic3BlZWQubmV0OjgwODAvZG93bmxvYWQK|aHR0cDovL29va2xhLm1ic3BlZWQubmV0OjgwODAvdXBsb2FkCg=='
 )
@@ -81,7 +85,7 @@ prepare_bimc() {
 print_banner() {
     clear
     echo "————————————— ${SCRIPT_NAME} v${SCRIPT_VERSION} —————————————"
-    echo "  长时压力测速 | 后台守护 | 随机间隔 | 曲线分析 | 报告上传"
+    echo "  长时压力测速 | 后台守护 | 随机间隔 | 稳定性测试 | 带宽限速"
     echo "  节点: 电信x3  联通x3  移动x3  港澳台日韩x4"
     echo "———————————————————————————————————————————————"
 }
@@ -99,6 +103,18 @@ random_wait_seconds() {
 get_thread_option() {
     read -r -p "启用八线程测速? [y/N]: " ans
     [[ "$ans" =~ ^[Yy]$ ]] && THREAD_FLAG='-m' || THREAD_FLAG=''
+}
+
+get_bandwidth_limit() {
+    echo -e "${CYAN}带宽上限限速 (防止跑满带宽)${ENDC}"
+    echo "  例如：服务器50Mbps，填30 则限制30Mbps以内测速"
+    echo "  填0 = 不限速（默认）"
+    while true; do
+        read -r -p "带宽上限 Mbps (默认0=不限): " BANDWIDTH_LIMIT
+        BANDWIDTH_LIMIT="${BANDWIDTH_LIMIT:-0}"
+        is_number "$BANDWIDTH_LIMIT" && break
+        echo -e "${RED}请输入数字${ENDC}"
+    done
 }
 
 get_duration_option() {
@@ -132,12 +148,12 @@ show_nodes() {
         entry="${NODES[$i]}"
         IFS='|' read -r _ group location _ _ _ <<< "$entry"
         local tag=""
-        [[ "$location" == "上海" || "$location" == *"镇江"* || "$location" == *"南京"* ]] && tag="✅已验证"
-        [[ "$location" == *"香港"* || "$location" == *"台北"* || "$location" == *"东京"* ]] && tag="✅已验证"
+        [[ "$location" == "上海" || "$location" == *"镇江"* || "$location" == *"南京"* ]] && tag="✅"
+        [[ "$location" == *"香港"* || "$location" == *"台北"* || "$location" == *"东京"* ]] && tag="✅"
         printf '  %-4s %-12s %-18s %s\n' "$((i+1))." "[$group]" "$location" "$tag"
     done
     echo
-    echo "  1-3=电信  4-6=联通  7-9=移动  10-13=港澳台"
+    echo "  1-3=电信  4-6=联通  7-9=移动  10-13=港澳台日韩"
     echo "════════════════════════════════════════════"
 }
 
@@ -178,6 +194,24 @@ select_nodes() {
     echo -e "${PURPLE}━━━━━━━━━━━━━━━━━━━━━━${ENDC}"
 }
 
+select_single_node() {
+    SELECTED_IDS=()
+    show_nodes
+    while true; do
+        read -r -p "请选择单条测试节点 [1-${#NODES[@]}]: " input
+        input="${input// /}"
+        [[ "$input" =~ ^[0-9]+$ ]] || { echo -e "${RED}请输入数字${ENDC}"; continue; }
+        local tn=$((10#$input))
+        (( tn < 1 || tn > ${#NODES[@]} )) && { echo -e "${RED}编号超范围${ENDC}"; continue; }
+        SELECTED_IDS=("$tn")
+        break
+    done
+    local entry group location
+    entry="${NODES[$((SELECTED_IDS[0]-1))]}"
+    IFS='|' read -r _ group location _ _ _ <<< "$entry"
+    echo -e "  ${GREEN}✓ 已选: [${group}] ${location}${ENDC}"
+}
+
 new_log_files() {
     local ts; ts=$(date '+%Y%m%d-%H%M%S')
     LOG_FILE="${LOG_DIR}/hyperspeed-${ts}.log"
@@ -195,11 +229,13 @@ log_line() {
 
 save_task_env() {
     : > "$TASK_FILE"
-    printf 'THREAD_FLAG=%q\n'      "$THREAD_FLAG"      >> "$TASK_FILE"
-    printf 'DURATION_SECONDS=%q\n' "$DURATION_SECONDS" >> "$TASK_FILE"
-    printf 'INTERVAL_SECONDS=%q\n' "$INTERVAL_SECONDS" >> "$TASK_FILE"
-    printf 'DURATION_HOURS=%q\n'   "$DURATION_HOURS"   >> "$TASK_FILE"
-    printf 'INTERVAL_MINUTES=%q\n' "$INTERVAL_MINUTES" >> "$TASK_FILE"
+    printf 'THREAD_FLAG=%q\n'       "$THREAD_FLAG"       >> "$TASK_FILE"
+    printf 'BANDWIDTH_LIMIT=%q\n'   "$BANDWIDTH_LIMIT"   >> "$TASK_FILE"
+    printf 'DURATION_SECONDS=%q\n'  "$DURATION_SECONDS"  >> "$TASK_FILE"
+    printf 'INTERVAL_SECONDS=%q\n'  "$INTERVAL_SECONDS"  >> "$TASK_FILE"
+    printf 'DURATION_HOURS=%q\n'    "$DURATION_HOURS"    >> "$TASK_FILE"
+    printf 'INTERVAL_MINUTES=%q\n'  "$INTERVAL_MINUTES"  >> "$TASK_FILE"
+    printf 'PAUSE_SECONDS=%q\n'     "${PAUSE_SECONDS:-0}" >> "$TASK_FILE"
     printf 'SELECTED_IDS=(' >> "$TASK_FILE"
     local id; for id in "${SELECTED_IDS[@]}"; do printf '%q ' "$id" >> "$TASK_FILE"; done
     printf ')\n' >> "$TASK_FILE"
@@ -212,6 +248,18 @@ is_running() {
     [ -f "$PID_FILE" ] || return 1
     local pid; pid=$(cat "$PID_FILE" 2>/dev/null)
     [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
+}
+
+# 构建 bimc 命令（含带宽限速参数）
+build_bimc_cmd() {
+    local dl="$1" ul="$2"
+    local cmd=("$BINARY" "$dl" "$ul")
+    [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
+    # bimc 支持 -b <Mbps> 带宽上限
+    if awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null; then
+        cmd+=("-b" "$BANDWIDTH_LIMIT")
+    fi
+    printf '%q ' "${cmd[@]}"
 }
 
 run_single_test() {
@@ -228,6 +276,9 @@ run_single_test() {
 
     local cmd=("$BINARY" "$dl" "$ul")
     [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
+    if awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null; then
+        cmd+=("-b" "$BANDWIDTH_LIMIT")
+    fi
     output=$("${cmd[@]}" 2>/dev/null)
 
     IFS=',' read -r upload up_status download down_status latency jitter <<< "$output"
@@ -259,7 +310,9 @@ run_test_plan() {
     new_log_files
     local end_epoch=0 now round=1 sleep_seconds
     (( DURATION_SECONDS > 0 )) && end_epoch=$(( $(date +%s) + DURATION_SECONDS ))
-    log_line "${CYAN}开始测试  日志: ${LOG_FILE}${ENDC}" "开始测试  日志: ${LOG_FILE}"
+    local bw_info=""
+    awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null && bw_info="  带宽限速: ${BANDWIDTH_LIMIT}Mbps"
+    log_line "${CYAN}开始测试  日志: ${LOG_FILE}${bw_info}${ENDC}" "开始测试  日志: ${LOG_FILE}${bw_info}"
     while true; do
         log_line "${PURPLE}———— 第 ${round} 轮 ————${ENDC}" "———— 第 ${round} 轮 ————"
         for id in "${SELECTED_IDS[@]}"; do
@@ -280,6 +333,114 @@ run_test_plan() {
     rm -f "$PID_FILE"
 }
 
+# ─────────────────────────────────────────────
+#  稳定性测试: 单线路 + 暂停间隔 + 无限循环
+# ─────────────────────────────────────────────
+run_stability_test() {
+    new_log_files
+    local id="${SELECTED_IDS[0]}" round=1
+    local entry group location isp dl_b64 ul_b64 dl ul
+    entry="${NODES[$((id-1))]}"
+    IFS='|' read -r _ group location isp dl_b64 ul_b64 <<< "$entry"
+    dl=$(decode_b64 "$dl_b64")
+    ul=$(decode_b64 "$ul_b64")
+
+    local bw_info=""
+    awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null && bw_info="  带宽限速: ${BANDWIDTH_LIMIT}Mbps"
+    local pause_info=""
+    (( PAUSE_SECONDS > 0 )) && pause_info="  暂停间隔: ${PAUSE_SECONDS}s"
+
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${ENDC}"
+    echo -e "${GREEN}  稳定性测试  节点: [${group}] ${location}${ENDC}"
+    echo -e "${GREEN}  日志: ${LOG_FILE}${bw_info}${pause_info}${ENDC}"
+    echo -e "${GREEN}  按 Ctrl+C 停止${ENDC}"
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${ENDC}"
+    log_line "${CYAN}稳定性测试开始  节点: ${group}|${location}${bw_info}${pause_info}${ENDC}" \
+             "稳定性测试开始  节点: ${group}|${location}${bw_info}${pause_info}"
+
+    # 累计统计
+    local total_cnt=0 ok_cnt=0
+    local sum_up=0 sum_dn=0 sum_la=0
+    local min_dn=999999 max_dn=0 min_la=999999
+
+    while true; do
+        local now output upload up_status download down_status latency jitter color screen plain
+        now=$(date '+%F %T')
+        local cmd=("$BINARY" "$dl" "$ul")
+        [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
+        awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null && cmd+=("-b" "$BANDWIDTH_LIMIT")
+        output=$("${cmd[@]}" 2>/dev/null)
+        IFS=',' read -r upload up_status download down_status latency jitter <<< "$output"
+        upload="${upload:-0}"; up_status="${up_status:-失败}"
+        download="${download:-0}"; down_status="${down_status:-失败}"
+        latency="${latency:-0}"; jitter="${jitter:-0}"
+
+        total_cnt=$(( total_cnt + 1 ))
+        color="$GREEN"
+        if [[ "$up_status" == "正常" && "$down_status" == "正常" ]]; then
+            ok_cnt=$(( ok_cnt + 1 ))
+            sum_up=$(awk "BEGIN{printf \"%.4f\", $sum_up+$upload}")
+            sum_dn=$(awk "BEGIN{printf \"%.4f\", $sum_dn+$download}")
+            sum_la=$(awk "BEGIN{printf \"%.4f\", $sum_la+$latency}")
+            awk "BEGIN{exit !($download<$min_dn)}" 2>/dev/null && min_dn=$download
+            awk "BEGIN{exit !($download>$max_dn)}" 2>/dev/null && max_dn=$download
+            awk "BEGIN{exit !($latency<$min_la)}" 2>/dev/null && min_la=$latency
+        else
+            color="$RED"
+        fi
+
+        local avail_pct
+        avail_pct=$(awk "BEGIN{printf \"%.1f\", $ok_cnt/$total_cnt*100}")
+        local avg_dn avg_up avg_la
+        if (( ok_cnt > 0 )); then
+            avg_dn=$(awk "BEGIN{printf \"%.2f\", $sum_dn/$ok_cnt}")
+            avg_up=$(awk "BEGIN{printf \"%.2f\", $sum_up/$ok_cnt}")
+            avg_la=$(awk "BEGIN{printf \"%.1f\", $sum_la/$ok_cnt}")
+        else
+            avg_dn=0; avg_up=0; avg_la=0
+        fi
+
+        screen="${YELLOW}[#${round}]${ENDC} ${PURPLE}${group}|${location}${ENDC}"
+        screen+="  ${CYAN}↑${ENDC}${upload}  ${color}${up_status}${ENDC}"
+        screen+="  ${CYAN}↓${ENDC}${download}  ${color}${down_status}${ENDC}"
+        screen+="  ${CYAN}↕${ENDC}${latency}  ${CYAN}ϟ${ENDC}${jitter}"
+        screen+="  ${YELLOW}可用:${avail_pct}%(${ok_cnt}/${total_cnt})${ENDC}"
+        screen+="  avg↓${avg_dn} min↓${min_dn} max↓${max_dn} avg↕${avg_la}ms"
+
+        plain="[#${round}] ${group}|${location}"
+        plain+="  ↑${upload} ${up_status}  ↓${download} ${down_status}  ↕${latency} ϟ${jitter}"
+        plain+="  可用:${avail_pct}%(${ok_cnt}/${total_cnt})  avg↓${avg_dn} min↓${min_dn} max↓${max_dn} avg↕${avg_la}ms"
+
+        log_line "$screen" "$plain"
+        printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL\n' \
+            "$now" "$round" "$group" "$location" "$isp" "$location" \
+            "$upload" "$up_status" "$download" "$down_status" \
+            "$latency" "$jitter" >> "$CSV_FILE"
+
+        round=$(( round + 1 ))
+        if (( PAUSE_SECONDS > 0 )); then
+            echo -e "  ${CYAN}暂停 ${PAUSE_SECONDS}s ...${ENDC}"
+            sleep "$PAUSE_SECONDS"
+        else
+            sleep 1
+        fi
+    done
+}
+
+get_stability_options() {
+    echo; echo -e "${CYAN}稳定性测试设置${ENDC}"
+    get_thread_option
+    echo
+    get_bandwidth_limit
+    echo
+    while true; do
+        read -r -p "每次测速后暂停时间(秒，0=连续不停，默认5): " PAUSE_SECONDS
+        PAUSE_SECONDS="${PAUSE_SECONDS:-5}"
+        is_number "$PAUSE_SECONDS" && break
+        echo -e "${RED}请输入数字${ENDC}"
+    done
+}
+
 write_worker_script() {
     mkdir -p "$RUN_DIR"
     cat > "$WORKER_SCRIPT" << 'WORKEREOF'
@@ -298,6 +459,8 @@ LAST_CSV_FILE="${RUN_DIR}/last_csv_path"
 mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR"
 [ -f "$TASK_FILE" ] || { echo "task.env not found"; exit 1; }
 source "$TASK_FILE"
+BANDWIDTH_LIMIT="${BANDWIDTH_LIMIT:-0}"
+PAUSE_SECONDS="${PAUSE_SECONDS:-0}"
 decode_b64() { printf '%s' "$1" | base64 -d 2>/dev/null | tr -d '\r\n'; }
 random_wait_seconds() {
     local max="$1"; (( max<=1 )) && echo 1 && return
@@ -331,6 +494,7 @@ run_single_test() {
     dl=$(decode_b64 "$dl_b64"); ul=$(decode_b64 "$ul_b64")
     local cmd=("$BINARY" "$dl" "$ul")
     [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
+    awk "BEGIN{exit !($BANDWIDTH_LIMIT>0)}" 2>/dev/null && cmd+=("-b" "$BANDWIDTH_LIMIT")
     output=$("${cmd[@]}" 2>/dev/null)
     IFS=',' read -r upload up_status download down_status latency jitter <<< "$output"
     upload="${upload:-0}"; up_status="${up_status:-失败}"
@@ -351,7 +515,10 @@ run_test_plan() {
     log_line "开始测试  日志: ${LOG_FILE}" "开始测试  日志: ${LOG_FILE}"
     while true; do
         log_line "———— 第 ${round} 轮 ————" "———— 第 ${round} 轮 ————"
-        for id in "${SELECTED_IDS[@]}"; do run_single_test "$id" "$round"; sleep 2; done
+        for id in "${SELECTED_IDS[@]}"; do
+            run_single_test "$id" "$round"
+            sleep 2
+        done
         (( DURATION_SECONDS==0 )) && break
         now=$(date +%s); (( now>=end_epoch )) && break
         sleep_seconds=$(random_wait_seconds "$INTERVAL_SECONDS")
@@ -370,9 +537,10 @@ WORKEREOF
 
 start_foreground_task() {
     prepare_bimc
-    echo; echo -e "${CYAN}步骤 1/3  线程设置${ENDC}";  get_thread_option
-    echo; echo -e "${CYAN}步骤 2/3  时长设置${ENDC}";  get_duration_option
-    echo; echo -e "${CYAN}步骤 3/3  选择节点${ENDC}";  select_nodes
+    echo; echo -e "${CYAN}步骤 1/4  线程设置${ENDC}";   get_thread_option
+    echo; echo -e "${CYAN}步骤 2/4  带宽限速${ENDC}";   get_bandwidth_limit
+    echo; echo -e "${CYAN}步骤 3/4  时长设置${ENDC}";   get_duration_option
+    echo; echo -e "${CYAN}步骤 4/4  选择节点${ENDC}";   select_nodes
     echo; echo -e "${GREEN}▶ 开始测速...${ENDC}"; sleep 1
     run_test_plan
 }
@@ -383,10 +551,12 @@ start_background_task() {
         return
     }
     prepare_bimc
-    echo; echo -e "${CYAN}步骤 1/3  线程设置${ENDC}";  get_thread_option
-    echo; echo -e "${CYAN}步骤 2/3  时长设置${ENDC}";  get_duration_option
-    echo; echo -e "${CYAN}步骤 3/3  选择节点${ENDC}";  select_nodes
+    echo; echo -e "${CYAN}步骤 1/4  线程设置${ENDC}";   get_thread_option
+    echo; echo -e "${CYAN}步骤 2/4  带宽限速${ENDC}";   get_bandwidth_limit
+    echo; echo -e "${CYAN}步骤 3/4  时长设置${ENDC}";   get_duration_option
+    echo; echo -e "${CYAN}步骤 4/4  选择节点${ENDC}";   select_nodes
     echo; echo -e "${GREEN}▶ 正在启动后台任务...${ENDC}"
+    PAUSE_SECONDS=0
     save_task_env
     write_worker_script
     : > "$DAEMON_STDOUT"
@@ -409,6 +579,16 @@ start_background_task() {
         echo -e "${RED}后台任务启动失败${ENDC}"; rm -f "$PID_FILE"
         [ -f "$DAEMON_STDOUT" ] && cat "$DAEMON_STDOUT"
     fi
+}
+
+start_stability_task() {
+    prepare_bimc
+    get_stability_options
+    echo; echo -e "${CYAN}选择稳定性测试节点（单条线路）${ENDC}"
+    select_single_node
+    echo; echo -e "${GREEN}▶ 开始稳定性测试...${ENDC}"; sleep 1
+    DURATION_SECONDS=0; INTERVAL_SECONDS=0
+    run_stability_test
 }
 
 show_status() {
@@ -735,32 +915,34 @@ upload_latest_report() {
 main_menu() {
     while true; do
         print_banner
-        echo "  1.  前台开始测速"
-        echo "  2.  后台守护开始测速"
-        echo "  3.  查看后台任务状态"
-        echo "  4.  停止后台任务"
-        echo "  5.  日志列表"
-        echo "  6.  查看最新日志"
-        echo "  7.  查看指定日志"
-        echo "  8.  分析最新CSV并生成曲线"
-        echo "  9.  选择CSV做分析并生成曲线"
-        echo "  10. 报告文件列表"
-        echo "  11. 上传最新报告并生成下载链接"
+        echo "  1.  前台开始测速（多节点）"
+        echo "  2.  后台守护测速（多节点）"
+        echo "  3.  ★ 单线路稳定性测试（前台循环）"
+        echo "  4.  查看后台任务状态"
+        echo "  5.  停止后台任务"
+        echo "  6.  日志列表"
+        echo "  7.  查看最新日志"
+        echo "  8.  查看指定日志"
+        echo "  9.  分析最新CSV并生成曲线"
+        echo "  10. 选择CSV做分析并生成曲线"
+        echo "  11. 报告文件列表"
+        echo "  12. 上传最新报告并生成下载链接"
         echo "  0.  退出"
         echo
         read -r -p "请选择: " menu
         case "$menu" in
-            1)  start_foreground_task;  pause_screen ;;
-            2)  start_background_task;  pause_screen ;;
-            3)  show_status;            pause_screen ;;
-            4)  stop_background_task;   pause_screen ;;
-            5)  list_logs;              pause_screen ;;
-            6)  view_latest_log;        pause_screen ;;
-            7)  view_log_by_menu;       pause_screen ;;
-            8)  analyze_latest_csv;     pause_screen ;;
-            9)  analyze_csv_by_menu;    pause_screen ;;
-            10) list_reports;           pause_screen ;;
-            11) upload_latest_report;   pause_screen ;;
+            1)  start_foreground_task;   pause_screen ;;
+            2)  start_background_task;   pause_screen ;;
+            3)  start_stability_task;    pause_screen ;;
+            4)  show_status;             pause_screen ;;
+            5)  stop_background_task;    pause_screen ;;
+            6)  list_logs;               pause_screen ;;
+            7)  view_latest_log;         pause_screen ;;
+            8)  view_log_by_menu;        pause_screen ;;
+            9)  analyze_latest_csv;      pause_screen ;;
+            10) analyze_csv_by_menu;     pause_screen ;;
+            11) list_reports;            pause_screen ;;
+            12) upload_latest_report;    pause_screen ;;
             0)  exit 0 ;;
             *)  echo -e "${RED}无效选项${ENDC}"; sleep 1 ;;
         esac
