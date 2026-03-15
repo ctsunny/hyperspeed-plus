@@ -985,32 +985,72 @@ run_ecsspeed_test() {
     local sel
     while true; do read -r -p "请选择: " sel; [[ "$sel" =~ ^[0-9]$ ]] && break; echo -e "${RED}无效${ENDC}"; done
     [[ "$sel" == "0" ]] && return
-    local _run_list() {
-        local list=("$@")
-        for item in "${list[@]}"; do
-            local sid; sid=$(echo "$item" | cut -d',' -f1)
-            local name; name=$(echo "$item" | cut -d',' -f2)
-            mkdir -p "${ECS_CLI_DIR}"
-            if [ -f "${ECS_CLI_DIR}/speedtest" ]; then
-                local args=(--progress=no --accept-license --accept-gdpr)
-                [ -n "$sid" ] && args+=(--server-id="$sid")
-                "${ECS_CLI_DIR}/speedtest" "${args[@]}" > "${ECS_CLI_DIR}/speedtest.log" 2>&1
-                local dl; dl=$(awk '/Download/{print $2" "$3}' "${ECS_CLI_DIR}/speedtest.log")
-                local up; up=$(awk '/Upload/{print $2" "$3}' "${ECS_CLI_DIR}/speedtest.log")
-                local lat; lat=$(grep -oP 'Idle Latency:\s+\K[\d\.]+' "${ECS_CLI_DIR}/speedtest.log")
-                local pkt; pkt=$(awk -F': +' '/Packet Loss/{if($2=="Not available."){print "NULL"}else{print $2}}' "${ECS_CLI_DIR}/speedtest.log")
-                [ -n "$dl" ] && echo -e "${name}\t ↑${up}\t ↓${dl}\t ↕${lat}ms\t 丢包:${pkt}"
-            elif [ -f "${ECS_CLI_DIR}/speedtest-go" ]; then
-                local args2=(--ua="${BrowserUA}")
-                [ -n "$sid" ] && args2+=(--server="$sid")
-                "${ECS_CLI_DIR}/speedtest-go" "${args2[@]}" > "${ECS_CLI_DIR}/speedtest.log" 2>&1
-                local dl; dl=$(grep -oP 'Download: \K[\d\.]+' "${ECS_CLI_DIR}/speedtest.log")
-                local up; up=$(grep -oP 'Upload: \K[\d\.]+' "${ECS_CLI_DIR}/speedtest.log")
-                local lat; lat=$(grep -oP 'Latency: \K[\d\.]+' "${ECS_CLI_DIR}/speedtest.log")
-                [ -n "$dl" ] && echo -e "${name}\t ↑${up}Mbps\t ↓${dl}Mbps\t ↕${lat}ms"
-            fi
-        done
-    }
+    _ecs_run_list() {
+    for item in "$@"; do
+        local sid; sid=$(echo "$item" | cut -d',' -f1)
+        local name; name=$(echo "$item" | cut -d',' -f2)
+        mkdir -p "${ECS_CLI_DIR}"
+        if [ -f "${ECS_CLI_DIR}/speedtest" ]; then
+            local args=(--progress=no --accept-license --accept-gdpr)
+            [ -n "$sid" ] && args+=(--server-id="$sid")
+            "${ECS_CLI_DIR}/speedtest" "${args[@]}" > "${ECS_CLI_DIR}/speedtest.log" 2>&1
+            local dl; dl=$(awk '/Download/{print $2" "$3}' "${ECS_CLI_DIR}/speedtest.log")
+            local up; up=$(awk '/Upload/{print $2" "$3}' "${ECS_CLI_DIR}/speedtest.log")
+            local lat; lat=$(grep -oP 'Idle Latency:\s+\K[\d\.]+' "${ECS_CLI_DIR}/speedtest.log")
+            local pkt; pkt=$(awk -F': +' '/Packet Loss/{if($2=="Not available."){print "NULL"}else{print $2}}' "${ECS_CLI_DIR}/speedtest.log")
+            [ -n "$dl" ] && echo -e "${name}\t ↑${up}\t ↓${dl}\t ↕${lat}ms\t 丢包:${pkt}"
+        elif [ -f "${ECS_CLI_DIR}/speedtest-go" ]; then
+            local args2=(--ua="${BrowserUA}")
+            [ -n "$sid" ] && args2+=(--server="$sid")
+            "${ECS_CLI_DIR}/speedtest-go" "${args2[@]}" > "${ECS_CLI_DIR}/speedtest.log" 2>&1
+            local dl; dl=$(grep -oP 'Download: \K[\d\.]+' "${ECS_CLI_DIR}/speedtest.log")
+            local up; up=$(grep -oP 'Upload: \K[\d\.]+' "${ECS_CLI_DIR}/speedtest.log")
+            local lat; lat=$(grep -oP 'Latency: \K[\d\.]+' "${ECS_CLI_DIR}/speedtest.log")
+            [ -n "$dl" ] && echo -e "${name}\t ↑${up}Mbps\t ↓${dl}Mbps\t ↕${lat}ms"
+        fi
+    done
+}
+
+run_ecsspeed_test() {
+    ecs_check_cdn_file
+    ecs_install_speedtest || { echo -e "${RED}speedtest 工具安装失败${ENDC}"; return 1; }
+    echo
+    echo "  三网/国际 speedtest.net 节点测速"
+    echo "——————————————————————————————————————————————————————————————————————————————"
+    echo -e "  ${GREEN}1.${ENDC} 三网就近    ${GREEN}2.${ENDC} 三网全测    ${GREEN}3.${ENDC} 联通    ${GREEN}4.${ENDC} 电信"
+    echo -e "  ${GREEN}5.${ENDC} 移动        ${GREEN}6.${ENDC} 香港        ${GREEN}7.${ENDC} 台湾    ${GREEN}8.${ENDC} 日本    ${GREEN}9.${ENDC} 新加坡"
+    echo -e "  ${GREEN}0.${ENDC} 返回主菜单"
+    echo "——————————————————————————————————————————————————————————————————————————————"
+    local sel
+    while true; do read -r -p "请选择: " sel; [[ "$sel" =~ ^[0-9]$ ]] && break; echo -e "${RED}无效${ENDC}"; done
+    [[ "$sel" == "0" ]] && return
+    echo "——————————————————————————————————————————————————————————————————————————————"
+    echo -e "位置\t\t 上传\t\t 下载\t\t 延迟\t  丢包率"
+    local ts; ts=$(date +%s)
+    case "$sel" in
+        1) local u=(); local t=(); local m=()
+           u=($(ecs_get_nearest_data "${SERVER_BASE_URL}/CN_Unicom.csv"))
+           t=($(ecs_get_nearest_data "${SERVER_BASE_URL}/CN_Telecom.csv"))
+           m=($(ecs_get_nearest_data "${SERVER_BASE_URL}/CN_Mobile.csv"))
+           _ecs_run_list "${u[@]}"; _ecs_run_list "${t[@]}"; _ecs_run_list "${m[@]}" ;;
+        2) local u=(); local t=(); local m=()
+           u=($(ecs_get_data "${SERVER_BASE_URL}/CN_Unicom.csv"))
+           t=($(ecs_get_data "${SERVER_BASE_URL}/CN_Telecom.csv"))
+           m=($(ecs_get_data "${SERVER_BASE_URL}/CN_Mobile.csv"))
+           _ecs_run_list "${u[@]}"; _ecs_run_list "${t[@]}"; _ecs_run_list "${m[@]}" ;;
+        3) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/CN_Unicom.csv")  ;;
+        4) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/CN_Telecom.csv") ;;
+        5) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/CN_Mobile.csv")  ;;
+        6) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/HK.csv")         ;;
+        7) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/TW.csv")         ;;
+        8) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/JP.csv")         ;;
+        9) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/SG.csv")         ;;
+    esac
+    local te; te=$(date +%s)
+    echo "——————————————————————————————————————————————————————————————————————————————"
+    echo " 总共花费: $(( te - ts )) 秒 | $(date)"
+}
+
     echo "——————————————————————————————————————————————————————————————————————————————"
     echo -e "位置\t\t 上传\t\t 下载\t\t 延迟\t  丢包率"
     local ts; ts=$(date +%s)
