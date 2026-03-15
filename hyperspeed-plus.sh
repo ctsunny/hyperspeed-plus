@@ -71,7 +71,7 @@ download_file() {
 
 check_dependencies() {
     local missing=()
-    for cmd in base64 awk sed date sort head tail tr find basename dirname tar ps kill chmod cp cat bc; do
+    for cmd in base64 awk sed date sort head tail tr find basename dirname tar ps kill chmod cp cat; do
         command_exists "$cmd" || missing+=("$cmd")
     done
     if ! command_exists curl && ! command_exists wget; then missing+=(curl/wget); fi
