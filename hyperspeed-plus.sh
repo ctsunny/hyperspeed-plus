@@ -9,13 +9,12 @@ CYAN='\033[0;36m'
 ENDC='\033[0m'
 
 SCRIPT_NAME='HyperSpeed Plus'
-SCRIPT_VERSION='6.8.0'
+SCRIPT_VERSION='6.9.0'
 BASE_DIR="${HOME}/.hyperspeed-plus"
 LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
 REPORT_DIR="${BASE_DIR}/reports"
 RUN_DIR="${BASE_DIR}/run"
-BIN_DIR="${BASE_DIR}/bin"
 WORKER_SCRIPT="${RUN_DIR}/worker.sh"
 BINARY="${WORK_DIR}/bimc"
 THREAD_FLAG=''
@@ -26,62 +25,42 @@ DAEMON_STDOUT="${RUN_DIR}/daemon.out"
 LAST_LOG_FILE="${RUN_DIR}/last_log_path"
 LAST_CSV_FILE="${RUN_DIR}/last_csv_path"
 
-mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR" "$BIN_DIR"
+mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR"
 
 # ── 节点定义 ──────────────────────────────────────────────────────────────────
-# 格式: tool|group|location|isp|dl_url_b64|ul_url_b64
-#
-# 所有国内节点均来自 speedtest.net 官方运营商 mini server（ookla协议）
-# 服务器地址来源: github.com/holotr/57f19258284da2376b902657c098b6ed
-# bimc 工具兼容标准 ookla mini server HTTP 协议
-#
-# 下载地址 = http://HOST:8080/speedtest/random350x350.jpg  (bimc自动拼接)
-# 上传地址 = http://HOST:8080/speedtest/upload.php         (bimc自动拼接)
-
-_b64() { printf '%s' "$1" | base64 -w0; }
-
-# ── 预先计算好的 base64（直接硬编码，避免运行时依赖）──
-# 格式: bimc工具接受完整 dl/ul URL 的base64
+# 全部来自 veoco/bim-core 官方 hyperspeed.sh（bench.im 原版），原版 base64 原封不动
+# 来源: https://github.com/veoco/bim-core/blob/main/hyperspeed.sh
 
 NODES=(
-# ═══════════════ 电信 ═══════════════
-# 上海电信 (ID:3633) China Telecom Shanghai
-'bimc|电信|上海|电信|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkLnBocA=='
-# 江苏南京5G电信 (ID:26352) China Telecom JiangSu 5G
-'bimc|电信|江苏南京5G|电信|aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL2Rvd25sb2Fk|aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL3VwbG9hZC5waHA='
-# 安徽合肥电信5G (ID:17145) China Telecom AnHui 5G
-'bimc|电信|安徽合肥5G|电信|aHR0cDovL3NwZWVkdGVzdDEuYWgxNjMuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEuYWgxNjMuY29tOjgwODAvdXBsb2FkLnBocA=='
-# 重庆电信 (ID:19076) China Telecom Chongqing
-'bimc|电信|重庆|电信|aHR0cDovL3NwZWVkLmNxdGVsZWNvbS5jb20uY246ODA4MC9kb3dubG9hZA==|aHR0cDovL3NwZWVkLmNxdGVsZWNvbS5jb20uY246ODA4MC91cGxvYWQucGhw'
-# 四川成都电信 (ID:29071) China Telecom Sichuan
-'bimc|电信|四川成都|电信|aHR0cDovL3NwZWVkdGVzdDEuc2MuMTg5LmNuOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEuc2MuMTg5LmNuOjgwODAvdXBsb2FkLnBocA=='
-# ═══════════════ 联通 ═══════════════
-# 上海联通5G (ID:24447) China Unicom Shanghai 5G
-'bimc|联通|上海5G|联通|aHR0cDovLzVnLnNodW5pY29tdGVzdC5jb206ODA4MC9kb3dubG9hZA==|aHR0cDovLzVnLnNodW5pY29tdGVzdC5jb206ODA4MC91cGxvYWQucGhw'
-# 江苏南京联通 (ID:13704) China Unicom Jiangsu
-'bimc|联通|江苏南京|联通|aHR0cDovL3NwZWVkdGVzdDAyLmpzMTY1LmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovL3NwZWVkdGVzdDAyLmpzMTY1LmNvbTo4MDgwL3VwbG9hZC5waHA='
-# 湖北武汉联通 (ID:5485) China Unicom Hubei
-'bimc|联通|湖北武汉|联通|aHR0cDovLzExMy41Ny4yNDkuMjo4MDgwL2Rvd25sb2Fk|aHR0cDovLzExMy41Ny4yNDkuMjo4MDgwL3VwbG9hZC5waHA='
-# 陕西西安联通 (ID:4863) China Unicom Xi'an
-'bimc|联通|陕西西安|联通|aHR0cDovL3hhd29yay53by14YS5jb206ODA4MC9kb3dubG9hZA==|aHR0cDovL3hhd29yay53by14YS5jb206ODA4MC91cGxvYWQucGhw'
-# 北京联通 (ID:5145) Beijing Unicom
-'bimc|联通|北京|联通|aHR0cDovL3d3dzIudW5pY29tdGVzdC5jb206ODA4MC9kb3dubG9hZA==|aHR0cDovL3d3dzIudW5pY29tdGVzdC5jb206ODA4MC91cGxvYWQucGhw'
-# ═══════════════ 移动 ═══════════════
-# 上海移动5G (ID:25637) ChinaMobile Shanghai 5G
-'bimc|移动|上海5G|移动|aHR0cDovL3NwZWVkdGVzdDQuc2guY2hpbmFtb2JpbGUuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDQuc2guY2hpbmFtb2JpbGUuY29tOjgwODAvdXBsb2FkLnBocA=='
-# 江苏移动5G (ID:27249) China Mobile Jiangsu 5G
-'bimc|移动|江苏南京5G|移动|aHR0cDovL293YS5lYXN0Y29tLXN3LmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovL293YS5lYXN0Y29tLXN3LmNvbTo4MDgwL3VwbG9hZC5waHA='
-# 浙江杭州移动 (ID:4647) China Mobile Zhejiang
-'bimc|移动|浙江杭州|移动|aHR0cDovL2x0ZXRlc3QxLjEzOXNpdGUuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL2x0ZXRlc3QxLjEzOXNpdGUuY29tOjgwODAvdXBsb2FkLnBocA=='
-# 湖北武汉移动5G (ID:29353) China Mobile Wuhan 5G
-'bimc|移动|湖北武汉5G|移动|aHR0cDovL3ZpcHNwZWVkdGVzdDgud3VoYW4ubmV0LmNuOjgwODAvZG93bmxvYWQ=|aHR0cDovL3ZpcHNwZWVkdGVzdDgud3VoYW4ubmV0LmNuOjgwODAvdXBsb2FkLnBocA=='
-# 四川成都移动 (ID:4575) China Mobile Sichuan
-'bimc|移动|四川成都|移动|aHR0cDovL3NwZWVkdGVzdDEuc2MuY2hpbmFtb2JpbGUuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEuc2MuY2hpbmFtb2JpbGUuY29tOjgwODAvdXBsb2FkLnBocA=='
-# ═══════════════ 港台 ═══════════════
-# 香港环电宽频
-'bimc|港澳台|香港环电宽频|香港|aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL2Rvd25sb2Fk|aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL3VwbG9hZC5waHA='
-# 台北中华电信 (ID:18445) Chunghwa Mobile
-'bimc|港澳台|台北中华电信|台湾|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL2Rvd25sb2Fk|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL3VwbG9hZC5waHA='
+# ── 电信 ──
+'bimc|电信|上海|电信|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQK|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkCg=='
+'bimc|电信|江苏镇江5G|电信|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvZG93bmxvYWQ=|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvdXBsb2Fk'
+'bimc|电信|江苏南京5G|电信|aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL3VwbG9hZAo='
+'bimc|电信|安徽合肥5G|电信|aHR0cDovL3NwZWVkdGVzdDEuYWgxNjMuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEuYWgxNjMuY29tOjgwODAvdXBsb2Fk'
+'bimc|电信|天津5G|电信|aHR0cDovL3N5LnRqdGVsZS5jb206ODA4MC9kb3dubG9hZA==|aHR0cDovL3N5LnRqdGVsZS5jb206ODA4MC91cGxvYWQ='
+'bimc|电信|天津|电信|aHR0cDovL3RqcmF0ZS50anRlbGUuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL3RqcmF0ZS50anRlbGUuY29tOjgwODAvdXBsb2Fk'
+'bimc|电信|四川成都|电信|aHR0cDovL3NwZWVkdGVzdDEuc2MuMTg5LmNuOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEuc2MuMTg5LmNuOjgwODAvdXBsb2Fk'
+'bimc|电信|甘肃兰州|电信|aHR0cDovL3NwZWVkLmJhamlhbmp1bi5jb206ODA4MC9kb3dubG9hZA==|aHR0cDovL3NwZWVkLmJhamlhbmp1bi5jb206ODA4MC91cGxvYWQ='
+# ── 联通 ──
+'bimc|联通|上海5G|联通|aHR0cDovLzVnLnNodW5pY29tdGVzdC5jb206ODA4MC9kb3dubG9hZAo=|aHR0cDovLzVnLnNodW5pY29tdGVzdC5jb206ODA4MC91cGxvYWQK'
+'bimc|联通|江苏无锡|联通|aHR0cHM6Ly9zcGVlZHRlc3QyLm5pdXRrLmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cHM6Ly9zcGVlZHRlc3QyLm5pdXRrLmNvbTo4MDgwL3VwbG9hZA=='
+'bimc|联通|江西南昌|联通|aHR0cDovL3NwZWVkdGVzdC5qeHVuaWNvbS5jb206ODA4MC9kb3dubG9hZA==|aHR0cDovL3NwZWVkdGVzdC5qeHVuaWNvbS5jb206ODA4MC91cGxvYWQ='
+'bimc|联通|河南郑州5G|联通|aHR0cDovLzVndGVzdC5zaGFuZ2R1LmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovLzVndGVzdC5zaGFuZ2R1LmNvbTo4MDgwL3VwbG9hZA=='
+'bimc|联通|湖南长沙5G|联通|aHR0cDovL3NwZWVkdGVzdDAxLmhuMTY1LmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovL3NwZWVkdGVzdDAxLmhuMTY1LmNvbTo4MDgwL3VwbG9hZA=='
+'bimc|联通|辽宁沈阳|联通|aHR0cDovL3VuaWNvbXNwZWVkdGVzdC5jb206ODA4MC9kb3dubG9hZAo=|aHR0cDovL3VuaWNvbXNwZWVkdGVzdC5jb206ODA4MC91cGxvYWQK'
+'bimc|联通|福建福州|联通|aHR0cDovL3VwbG9hZDEudGVzdHNwZWVkLmNkbjE2LmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovL3VwbG9hZDEudGVzdHNwZWVkLmNkbjE2LmNvbTo4MDgwL3VwbG9hZA=='
+# ── 移动 ──
+'bimc|移动|北京|移动|aHR0cDovLzIxMS4xMzYuMzAuMTE0OjkwMDAvc3BlZWQvMjAwMDAwMC5kYXRhCg==|aHR0cDovLzIxMS4xMzYuMzAuMTE0OjkwMDAvc3BlZWQvMjAwMDAwLmRhdGEK'
+'bimc|移动|浙江杭州5G|移动|aHR0cDovL3NwZWVkdGVzdC4xMzlwbGF5LmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovL3NwZWVkdGVzdC4xMzlwbGF5LmNvbTo4MDgwL3VwbG9hZA=='
+'bimc|移动|陕西西安5G|移动|aHR0cDovL3NwZWVkdGVzdC5vbmUtcHVuY2gud2luOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdC5vbmUtcHVuY2gud2luOjgwODAvdXBsb2Fk'
+'bimc|移动|四川成都|移动|aHR0cDovL3NwZWVkdGVzdDEuc2MuY2hpbmFtb2JpbGUuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEuc2MuY2hpbmFtb2JpbGUuY29tOjgwODAvdXBsb2Fk'
+'bimc|移动|甘肃兰州|移动|aHR0cDovL3NwZWVkdGVzdDEuZ3MuY2hpbmFtb2JpbGUuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEuZ3MuY2hpbmFtb2JpbGUuY29tOjgwODAvdXBsb2Fk'
+# ── 港澳台日韩 ──
+'bimc|港澳台日韩|香港环电宽频|香港|aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL3VwbG9hZAo='
+'bimc|港澳台日韩|澳门电讯|澳门|aHR0cDovL3NwZWVkdGVzdDUubWFjYXUuY3RtLm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL3NwZWVkdGVzdDUubWFjYXUuY3RtLm5ldDo4MDgwL3VwbG9hZAo='
+'bimc|港澳台日韩|台北中华电信|台湾|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL3VwbG9hZAo='
+'bimc|港澳台日韩|东京乐天移动|日本|aHR0cDovL29va2xhLm1ic3BlZWQubmV0OjgwODAvZG93bmxvYWQK|aHR0cDovL29va2xhLm1ic3BlZWQubmV0OjgwODAvdXBsb2FkCg=='
+'bimc|港澳台日韩|首尔Kdatacenter|韩国|aHR0cDovL3NwZWVkdGVzdC5rZGF0YWNlbnRlci5jb206ODA4MC9kb3dubG9hZAo=|aHR0cDovL3NwZWVkdGVzdC5rZGF0YWNlbnRlci5jb206ODA4MC91cGxvYWQK'
 )
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
@@ -121,8 +100,7 @@ print_banner() {
     clear
     echo "—————————————————————— ${SCRIPT_NAME} ${SCRIPT_VERSION} ——————————————————————"
     echo "  长时压力测速 | 后台守护 | 随机间隔 | 曲线分析 | 报告上传"
-    echo "  日志: ${LOG_DIR}  报告: ${REPORT_DIR}"
-    echo "  节点来源: speedtest.net 运营商官方 mini server（电信/联通/移动/港台）"
+    echo "  节点来源: veoco/bim-core 官方 hyperspeed.sh（原版 base64，真实可用）"
     echo "——————————————————————————————————————————————————————————————————————————————"
 }
 
@@ -164,34 +142,30 @@ get_duration_option() {
 
 show_nodes() {
     echo
-    echo "═══════════════════ 可选测速节点 ═══════════════════"
-    local i entry tool group location isp
-    printf '  %-4s %-10s %-14s %s\n' "编号" "运营商" "位置" "服务器来源"
-    echo "  ────────────────────────────────────────────────"
+    echo "═══════════════════════ 可选测速节点 ═══════════════════════"
+    printf '  %-4s %-12s %-18s %s\n' "编号" "运营商" "位置" "来源"
+    echo "  ─────────────────────────────────────────────────────────"
+    local i entry group location isp
     for i in "${!NODES[@]}"; do
-        entry="${NODES[$i]}"
-        IFS='|' read -r tool group location isp _ _ <<< "$entry"
-        printf '  %-4s %-10s %-14s %s\n' "$((i+1))." "[$group]" "$location" "($isp)"
+        entry="${NODES[$i]}"; IFS='|' read -r _ group location isp _ _ <<< "$entry"
+        printf '  %-4s %-12s %-18s %s\n' "$((i+1))." "[$group]" "$location" "($isp)"
     done
     echo
-    echo "  all=全选  1-5=电信  6-10=联通  11-15=移动  16-17=港台"
-    echo "═══════════════════════════════════════════════════"
+    echo "  all=全选  1-8=电信  9-14=联通  15-19=移动  20-24=港澳台日韩"
+    echo "  推荐精简: 1,2,3,9,10,15,16  (三网各2个，速度快)"
+    echo "═══════════════════════════════════════════════════════════"
 }
 
 select_nodes() {
     local input
     SELECTED_IDS=()
     show_nodes
-
     while true; do
         read -r -p "请选择测试节点 [all/1,2,3...]: " input
         input="${input// /}"
-
         if [[ -z "$input" || "$input" == "all" ]]; then
-            for token in "${!NODES[@]}"; do SELECTED_IDS+=("$((token+1))"); done
-            break
+            for token in "${!NODES[@]}"; do SELECTED_IDS+=("$((token+1))"); done; break
         fi
-
         IFS=',' read -r -a TOKENS <<< "$input"
         local valid=1
         for token in "${TOKENS[@]}"; do
@@ -199,17 +173,14 @@ select_nodes() {
             local tn=$((10#$token))
             (( tn < 1 || tn > ${#NODES[@]} )) && { valid=0; break; }
         done
-        if (( valid == 0 )); then
-            echo -e "${RED}输入无效，请输入编号（如 1,6,11）或 all${ENDC}"; continue
-        fi
+        if (( valid == 0 )); then echo -e "${RED}输入无效${ENDC}"; continue; fi
         for token in "${TOKENS[@]}"; do
             local tn=$((10#$token))
             array_contains "$tn" "${SELECTED_IDS[@]}" || SELECTED_IDS+=("$tn")
         done
         [ ${#SELECTED_IDS[@]} -gt 0 ] && break
-        echo -e "${RED}未选择任何节点，请重新输入${ENDC}"
+        echo -e "${RED}未选择任何节点${ENDC}"
     done
-
     echo
     echo -e "${PURPLE}━━━━━━━━━━━━━━━━ 已选节点 ━━━━━━━━━━━━━━━━${ENDC}"
     local id entry group location
@@ -220,21 +191,15 @@ select_nodes() {
     echo -e "${PURPLE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${ENDC}"
 }
 
-# ── 日志 ──────────────────────────────────────────────────────────────────────
-
 new_log_files() {
     local ts; ts=$(date '+%Y%m%d-%H%M%S')
     LOG_FILE="${LOG_DIR}/hyperspeed-${ts}.log"
     CSV_FILE="${LOG_DIR}/hyperspeed-${ts}.csv"
     printf 'time,round,group,location,isp,node_name,upload_mbps,upload_status,download_mbps,download_status,latency_ms,jitter_ms,packet_loss\n' > "$CSV_FILE"
-    echo "$LOG_FILE" > "$LAST_LOG_FILE"
-    echo "$CSV_FILE" > "$LAST_CSV_FILE"
+    echo "$LOG_FILE" > "$LAST_LOG_FILE"; echo "$CSV_FILE" > "$LAST_CSV_FILE"
 }
 
-log_line() {
-    printf '%b\n' "$1"
-    printf '%b\n' "$2" >> "$LOG_FILE"
-}
+log_line() { printf '%b\n' "$1"; printf '%b\n' "$2" >> "$LOG_FILE"; }
 
 save_task_env() {
     : > "$TASK_FILE"
@@ -252,11 +217,9 @@ save_task_env() {
 }
 
 is_running() {
-    if [ -f "$PID_FILE" ]; then
-        local pid; pid=$(cat "$PID_FILE" 2>/dev/null)
-        [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && return 0
-    fi
-    return 1
+    [ -f "$PID_FILE" ] || return 1
+    local pid; pid=$(cat "$PID_FILE" 2>/dev/null)
+    [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
 }
 
 run_single_test() {
@@ -265,36 +228,24 @@ run_single_test() {
     local dl ul node_name output
     local upload up_status download down_status latency jitter now screen plain color
 
-    entry="${NODES[$((id-1))]}"
-    IFS='|' read -r _ group location isp dl_b64 ul_b64 <<< "$entry"
+    entry="${NODES[$((id-1))]}"; IFS='|' read -r _ group location isp dl_b64 ul_b64 <<< "$entry"
     now=$(date '+%F %T')
-
-    dl=$(decode_b64 "$dl_b64")
-    ul=$(decode_b64 "$ul_b64")
+    dl=$(decode_b64 "$dl_b64"); ul=$(decode_b64 "$ul_b64")
     node_name=$("$BINARY" -n "$location" 2>/dev/null)
     [ -n "$node_name" ] || node_name="$location"
-
-    local cmd=("$BINARY" "$dl" "$ul")
-    [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
+    local cmd=("$BINARY" "$dl" "$ul"); [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
     output=$("${cmd[@]}" 2>/dev/null)
-
     IFS=',' read -r upload up_status download down_status latency jitter <<< "$output"
     upload="${upload:-0}"; up_status="${up_status:-失败}"
     download="${download:-0}"; down_status="${down_status:-失败}"
-    latency="${latency:-0}"; jitter="${jitter:-0}"
-    location="$node_name"
-
-    color="$GREEN"
-    [[ "$up_status" != "正常" || "$down_status" != "正常" ]] && color="$RED"
-
+    latency="${latency:-0}"; jitter="${jitter:-0}"; location="$node_name"
+    color="$GREEN"; [[ "$up_status" != "正常" || "$down_status" != "正常" ]] && color="$RED"
     screen="${YELLOW}[第${round}轮]${ENDC} ${PURPLE}${group}${ENDC}|${GREEN}${location}${ENDC} ${CYAN}↑${upload}${ENDC} ${color}${up_status}${ENDC} ${CYAN}↓${download}${ENDC} ${color}${down_status}${ENDC} ${CYAN}↕${latency} ϟ${jitter}${ENDC}"
     plain="[第${round}轮] ${group}|${location} ↑${upload} ${up_status} ↓${download} ${down_status} ↕${latency} ϟ${jitter}"
-
     log_line "$screen" "$plain"
     printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL\n' \
         "$now" "$round" "$group" "$location" "$isp" "$location" \
-        "$upload" "$up_status" "$download" "$down_status" \
-        "$latency" "$jitter" >> "$CSV_FILE"
+        "$upload" "$up_status" "$download" "$down_status" "$latency" "$jitter" >> "$CSV_FILE"
 }
 
 run_test_plan() {
@@ -313,8 +264,7 @@ run_test_plan() {
         log_line "${CYAN}等待 ${sleep_seconds} 秒${ENDC}" "等待 ${sleep_seconds} 秒"
         sleep "$sleep_seconds"; round=$((round+1))
     done
-    log_line "${GREEN}测试完成${ENDC}" "测试完成"
-    rm -f "$PID_FILE"
+    log_line "${GREEN}测试完成${ENDC}" "测试完成"; rm -f "$PID_FILE"
 }
 
 write_worker_script() {
@@ -323,27 +273,20 @@ write_worker_script() {
 #!/usr/bin/env bash
 set -o pipefail
 BASE_DIR="${HOME}/.hyperspeed-plus"
-LOG_DIR="${BASE_DIR}/logs"
-WORK_DIR="${BASE_DIR}/tmp"
-REPORT_DIR="${BASE_DIR}/reports"
-RUN_DIR="${BASE_DIR}/run"
-BINARY="${WORK_DIR}/bimc"
-PID_FILE="${RUN_DIR}/hyperspeed.pid"
-TASK_FILE="${RUN_DIR}/task.env"
-LAST_LOG_FILE="${RUN_DIR}/last_log_path"
-LAST_CSV_FILE="${RUN_DIR}/last_csv_path"
+LOG_DIR="${BASE_DIR}/logs"; WORK_DIR="${BASE_DIR}/tmp"; REPORT_DIR="${BASE_DIR}/reports"
+RUN_DIR="${BASE_DIR}/run"; BINARY="${WORK_DIR}/bimc"
+PID_FILE="${RUN_DIR}/hyperspeed.pid"; TASK_FILE="${RUN_DIR}/task.env"
+LAST_LOG_FILE="${RUN_DIR}/last_log_path"; LAST_CSV_FILE="${RUN_DIR}/last_csv_path"
 mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR"
 [ -f "$TASK_FILE" ] || { echo "task.env not found"; exit 1; }
 source "$TASK_FILE"
-
 decode_b64() { printf '%s' "$1" | base64 -d 2>/dev/null | tr -d '\r\n'; }
 random_wait_seconds() {
     local max="$1"; (( max<=1 )) && echo 1 && return
     command -v shuf >/dev/null 2>&1 && shuf -i 1-"$max" -n 1 || echo $(( RANDOM%max+1 ))
 }
 prepare_bimc() {
-    [ -x "$BINARY" ] && return
-    local arch; arch=$(uname -m)
+    [ -x "$BINARY" ] && return; local arch; arch=$(uname -m)
     command -v curl >/dev/null 2>&1 && \
         curl -fsSL "https://bench.im/bimc-${arch}" -o "$BINARY" || \
         wget --no-check-certificate -qO "$BINARY" "https://bench.im/bimc-${arch}"
@@ -351,39 +294,30 @@ prepare_bimc() {
 }
 new_log_files() {
     local ts; ts=$(date '+%Y%m%d-%H%M%S')
-    LOG_FILE="${LOG_DIR}/hyperspeed-${ts}.log"
-    CSV_FILE="${LOG_DIR}/hyperspeed-${ts}.csv"
+    LOG_FILE="${LOG_DIR}/hyperspeed-${ts}.log"; CSV_FILE="${LOG_DIR}/hyperspeed-${ts}.csv"
     printf 'time,round,group,location,isp,node_name,upload_mbps,upload_status,download_mbps,download_status,latency_ms,jitter_ms,packet_loss\n' > "$CSV_FILE"
     echo "$LOG_FILE" > "$LAST_LOG_FILE"; echo "$CSV_FILE" > "$LAST_CSV_FILE"
 }
 log_line() { printf '%b\n' "$1"; printf '%b\n' "$2" >> "$LOG_FILE"; }
-
 run_single_test() {
-    local id="$1" round="$2"
-    local entry group location isp dl_b64 ul_b64 dl ul node_name output
-    local upload up_status download down_status latency jitter now plain
+    local id="$1" round="$2"; local entry group location isp dl_b64 ul_b64
+    local dl ul node_name output upload up_status download down_status latency jitter now plain
     entry="${NODES[$((id-1))]}"; IFS='|' read -r _ group location isp dl_b64 ul_b64 <<< "$entry"
-    now=$(date '+%F %T')
-    dl=$(decode_b64 "$dl_b64"); ul=$(decode_b64 "$ul_b64")
+    now=$(date '+%F %T'); dl=$(decode_b64 "$dl_b64"); ul=$(decode_b64 "$ul_b64")
     node_name=$("$BINARY" -n "$location" 2>/dev/null); [ -n "$node_name" ] || node_name="$location"
     local cmd=("$BINARY" "$dl" "$ul"); [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
     output=$("${cmd[@]}" 2>/dev/null)
     IFS=',' read -r upload up_status download down_status latency jitter <<< "$output"
-    upload="${upload:-0}"; up_status="${up_status:-失败}"
-    download="${download:-0}"; down_status="${down_status:-失败}"
-    latency="${latency:-0}"; jitter="${jitter:-0}"
-    location="$node_name"
+    upload="${upload:-0}"; up_status="${up_status:-失败}"; download="${download:-0}"
+    down_status="${down_status:-失败}"; latency="${latency:-0}"; jitter="${jitter:-0}"; location="$node_name"
     plain="[第${round}轮] ${group}|${location} ↑${upload} ${up_status} ↓${download} ${down_status} ↕${latency} ϟ${jitter}"
     log_line "$plain" "$plain"
     printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL\n' \
         "$now" "$round" "$group" "$location" "$isp" "$location" \
-        "$upload" "$up_status" "$download" "$down_status" \
-        "$latency" "$jitter" >> "$CSV_FILE"
+        "$upload" "$up_status" "$download" "$down_status" "$latency" "$jitter" >> "$CSV_FILE"
 }
-
 run_test_plan() {
-    trap 'rm -f "$PID_FILE"' EXIT
-    new_log_files
+    trap 'rm -f "$PID_FILE"' EXIT; new_log_files
     local end_epoch=0 now round=1 sleep_seconds
     (( DURATION_SECONDS>0 )) && end_epoch=$(( $(date +%s)+DURATION_SECONDS ))
     log_line "开始测试 日志:${LOG_FILE}" "开始测试 日志:${LOG_FILE}"
@@ -397,12 +331,9 @@ run_test_plan() {
         (( sleep_seconds<=0 )) && break
         log_line "等待 ${sleep_seconds} 秒" "等待 ${sleep_seconds} 秒"
         sleep "$sleep_seconds"; round=$((round+1))
-    done
-    log_line "测试完成" "测试完成"
+    done; log_line "测试完成" "测试完成"
 }
-
-prepare_bimc
-run_test_plan
+prepare_bimc; run_test_plan
 WORKEREOF
     chmod +x "$WORKER_SCRIPT"
 }
@@ -412,14 +343,11 @@ start_foreground_task() {
     echo; echo -e "${CYAN}步骤 1/3  线程设置${ENDC}"; get_thread_option
     echo; echo -e "${CYAN}步骤 2/3  时长设置${ENDC}"; get_duration_option
     echo; echo -e "${CYAN}步骤 3/3  选择节点${ENDC}"; select_nodes
-    echo; echo -e "${GREEN}▶ 开始测速...${ENDC}"; sleep 1
-    run_test_plan
+    echo; echo -e "${GREEN}▶ 开始测速...${ENDC}"; sleep 1; run_test_plan
 }
 
 start_background_task() {
-    if is_running; then
-        echo -e "${YELLOW}已有后台任务运行中，PID: $(cat "$PID_FILE")${ENDC}"; return
-    fi
+    is_running && { echo -e "${YELLOW}已有后台任务运行中，PID: $(cat "$PID_FILE")${ENDC}"; return; }
     prepare_bimc
     echo; echo -e "${CYAN}步骤 1/3  线程设置${ENDC}"; get_thread_option
     echo; echo -e "${CYAN}步骤 2/3  时长设置${ENDC}"; get_duration_option
@@ -427,8 +355,7 @@ start_background_task() {
     echo; echo -e "${GREEN}▶ 正在启动后台任务...${ENDC}"
     save_task_env; write_worker_script; : > "$DAEMON_STDOUT"
     nohup bash "$WORKER_SCRIPT" >> "$DAEMON_STDOUT" 2>&1 &
-    local pid=$!; echo "$pid" > "$PID_FILE"; disown "$pid" 2>/dev/null || true
-    sleep 4
+    local pid=$!; echo "$pid" > "$PID_FILE"; disown "$pid" 2>/dev/null || true; sleep 4
     if kill -0 "$pid" 2>/dev/null; then
         echo
         echo -e "${GREEN}╔══════════════════════════════════════════╗${ENDC}"
@@ -471,26 +398,20 @@ stop_background_task() {
 list_logs() {
     mapfile -t LOG_FILES < <(find "$LOG_DIR" -maxdepth 1 -type f -name '*.log' | sort -r)
     [ ${#LOG_FILES[@]} -eq 0 ] && { echo -e "${YELLOW}暂无日志${ENDC}"; return 1; }
-    echo; local i
-    for i in "${!LOG_FILES[@]}"; do printf '  %02d. %s\n' "$((i+1))" "$(basename "${LOG_FILES[$i]}")"; done
-    echo; return 0
+    echo; local i; for i in "${!LOG_FILES[@]}"; do printf '  %02d. %s\n' "$((i+1))" "$(basename "${LOG_FILES[$i]}")"; done; echo; return 0
 }
 
 list_csvs() {
     mapfile -t CSV_FILES < <(find "$LOG_DIR" -maxdepth 1 -type f -name '*.csv' | sort -r)
     [ ${#CSV_FILES[@]} -eq 0 ] && { echo -e "${YELLOW}暂无CSV${ENDC}"; return 1; }
-    echo; local i
-    for i in "${!CSV_FILES[@]}"; do printf '  %02d. %s\n' "$((i+1))" "$(basename "${CSV_FILES[$i]}")"; done
-    echo; return 0
+    echo; local i; for i in "${!CSV_FILES[@]}"; do printf '  %02d. %s\n' "$((i+1))" "$(basename "${CSV_FILES[$i]}")"; done; echo; return 0
 }
 
 list_reports() {
     mapfile -t REPORT_FILES < <(find "$REPORT_DIR" -maxdepth 1 -type f \
         \( -name '*.html' -o -name '*.txt' -o -name '*.svg' -o -name '*.tar.gz' -o -name '*.csv' \) | sort -r)
     [ ${#REPORT_FILES[@]} -eq 0 ] && { echo -e "${YELLOW}暂无报告${ENDC}"; return 1; }
-    echo; local i
-    for i in "${!REPORT_FILES[@]}"; do printf '  %02d. %s\n' "$((i+1))" "$(basename "${REPORT_FILES[$i]}")"; done
-    echo; return 0
+    echo; local i; for i in "${!REPORT_FILES[@]}"; do printf '  %02d. %s\n' "$((i+1))" "$(basename "${REPORT_FILES[$i]}")"; done; echo; return 0
 }
 
 view_latest_log() {
@@ -500,10 +421,8 @@ view_latest_log() {
 }
 
 view_log_by_menu() {
-    list_logs || return
-    local choice; read -r -p "选择日志编号: " choice
-    [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice<1 || choice>${#LOG_FILES[@]} )) && \
-        { echo -e "${RED}编号无效${ENDC}"; return; }
+    list_logs || return; local choice; read -r -p "选择日志编号: " choice
+    [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice<1 || choice>${#LOG_FILES[@]} )) && { echo -e "${RED}编号无效${ENDC}"; return; }
     sed -n '1,300p' "${LOG_FILES[$((choice-1))]}"
 }
 
@@ -531,8 +450,7 @@ generate_summary_report() {
      total++;rs[r]=1;if(st=="")st=t;et=t;gt[g]++;
      if(us=="失败"||ds=="失败")fail++;
      if(us=="正常"&&ds=="正常"){success++;go[g]++;
-       usum+=up;dsum+=dn;lsum+=la;
-       usq+=up*up;dsq+=dn*dn;lsq+=la*la;
+       usum+=up;dsum+=dn;lsum+=la;usq+=up*up;dsq+=dn*dn;lsq+=la*la;
        if(bd==""||dn>bdv){bd=g"|"nd;bdv=dn;}
        if(bu==""||up>buv){bu=g"|"nd;buv=up;}
        if(bl==""||la<blv){bl=g"|"nd;blv=la;}
@@ -556,7 +474,7 @@ generate_summary_report() {
           else if(da>=40&&la2<=200)print "  综合评估: ★★  线路可用";
           else print "  综合评估: ★   线路存在短板";}
         print ""; print "━━━━━ 分组统计 ━━━━━";
-        for(g in gt){r2=(go[g]+0)/gt[g]*100;printf "  %-10s %.2f%% (%d/%d)",g,r2,go[g]+0,gt[g];
+        for(g in gt){r2=(go[g]+0)/gt[g]*100;printf "  %-14s %.2f%% (%d/%d)",g,r2,go[g]+0,gt[g];
           if((gdo[g]+0)>0)printf "  ↑%.2f ↓%.2f ↕%.2f",gus[g]/gdo[g],gds[g]/gdo[g],gls[g]/gdo[g];printf "\n";}
         print "═══════════════════════════════════════════════════════";
     }' "$csv_file" > "$out_file"
@@ -625,8 +543,8 @@ generate_html_report() {
 <html lang="zh-CN"><head><meta charset="UTF-8"><title>HyperSpeed Plus 报告</title>
 <style>body{background:#020617;color:#e5e7eb;font-family:Arial,sans-serif;margin:0;padding:24px}.wrap{max-width:1320px;margin:0 auto}.card{background:#111827;border:1px solid #1f2937;border-radius:16px;padding:20px;margin-bottom:20px}pre{white-space:pre-wrap;line-height:1.7;font-size:14px}img{width:100%;border-radius:12px;border:1px solid #1f2937}a{color:#7dd3fc}h1,h2{margin-top:0}</style></head>
 <body><div class="wrap">
-<div class="card"><h1>HyperSpeed Plus 分析报告</h1><p>
-<a href="${sn}">${sn}</a> | <a href="${sp}">${sp}</a> | <a href="${ln}">${ln}</a></p></div>
+<div class="card"><h1>HyperSpeed Plus 分析报告</h1>
+<p><a href="${sn}">${sn}</a> | <a href="${sp}">${sp}</a> | <a href="${ln}">${ln}</a></p></div>
 <div class="card"><h2>分析摘要</h2><pre>$(sed 's/&/\&amp;/g;s/</\&lt;/g;s/>/\&gt;/g' "$summary_file")</pre></div>
 <div class="card"><h2>速度曲线</h2><img src="${sp}" alt="速度曲线"></div>
 <div class="card"><h2>延迟曲线</h2><img src="${ln}" alt="延迟曲线"></div>
@@ -635,18 +553,13 @@ HTMLEOF
 }
 
 analyze_csv_file() {
-    local csv_file="$1"
-    [ -f "$csv_file" ] || { echo -e "${RED}CSV不存在${ENDC}"; return 1; }
+    local csv_file="$1"; [ -f "$csv_file" ] || { echo -e "${RED}CSV不存在${ENDC}"; return 1; }
     local bn; bn=$(basename "$csv_file" .csv)
-    local rd="${REPORT_DIR}/${bn}-rounds.csv"
-    local st="${REPORT_DIR}/${bn}-summary.txt"
-    local ss="${REPORT_DIR}/${bn}-speed.svg"
-    local ls="${REPORT_DIR}/${bn}-latency.svg"
+    local rd="${REPORT_DIR}/${bn}-rounds.csv" st="${REPORT_DIR}/${bn}-summary.txt"
+    local ss="${REPORT_DIR}/${bn}-speed.svg" ls="${REPORT_DIR}/${bn}-latency.svg"
     local rh="${REPORT_DIR}/${bn}-report.html"
-    build_round_curve_data "$csv_file" "$rd"
-    generate_summary_report "$csv_file" "$st"
-    generate_speed_svg "$rd" "$ss"
-    generate_latency_svg "$rd" "$ls"
+    build_round_curve_data "$csv_file" "$rd"; generate_summary_report "$csv_file" "$st"
+    generate_speed_svg "$rd" "$ss"; generate_latency_svg "$rd" "$ls"
     generate_html_report "$st" "$ss" "$ls" "$rh"
     sed -n '1,220p' "$st"; echo
     echo -e "${GREEN}速度曲线:${ENDC} $ss"
@@ -661,10 +574,8 @@ analyze_latest_csv() {
 }
 
 analyze_csv_by_menu() {
-    list_csvs || return
-    local choice; read -r -p "选择CSV编号: " choice
-    [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice<1 || choice>${#CSV_FILES[@]} )) && \
-        { echo -e "${RED}编号无效${ENDC}"; return; }
+    list_csvs || return; local choice; read -r -p "选择CSV编号: " choice
+    [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice<1 || choice>${#CSV_FILES[@]} )) && { echo -e "${RED}编号无效${ENDC}"; return; }
     analyze_csv_file "${CSV_FILES[$((choice-1))]}"
 }
 
