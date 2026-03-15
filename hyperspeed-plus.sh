@@ -10,7 +10,7 @@ BLUE='\033[0;34m'
 ENDC='\033[0m'
 
 SCRIPT_NAME='HyperSpeed Plus'
-SCRIPT_VERSION='5.1.0'
+SCRIPT_VERSION='5.2.1'
 BASE_DIR="${HOME}/.hyperspeed-plus"
 LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
@@ -75,16 +75,21 @@ check_dependencies() {
 }
 
 ensure_self_copy() {
-    local src="$0"
-    if [ -r "$src" ]; then
-        cat "$src" > "$SELF_PATH" && chmod +x "$SELF_PATH"
-        return 0
+    local src="${BASH_SOURCE[0]}"
+    local first_line=""
+    if [ -n "$src" ] && [ -r "$src" ]; then
+        first_line=$(head -n 1 "$src" 2>/dev/null || true)
+        if [[ "$first_line" == '#!'* ]]; then
+            cat "$src" > "$SELF_PATH" && chmod +x "$SELF_PATH"
+            return 0
+        fi
     fi
     if [ -r "$SELF_PATH" ]; then
         chmod +x "$SELF_PATH"
         return 0
     fi
     echo -e "${RED}无法创建本地脚本副本，后台模式不可用${ENDC}"
+    echo -e "${YELLOW}当前脚本来源: ${src:-unknown}${ENDC}"
     return 1
 }
 
@@ -145,7 +150,7 @@ show_nodes() {
 }
 
 select_nodes() {
-    local input token
+    local input token token_num
     SELECTED_IDS=()
     show_nodes
     while true; do
@@ -160,9 +165,12 @@ select_nodes() {
         IFS=',' read -r -a TOKENS <<< "$input"
         local valid=1
         for token in "${TOKENS[@]}"; do
-            [[ "$token" =~ ^[0-9]+$ ]] || valid=0
-            if (( token < 1 || token > ${#NODES[@]} )); then
+            [[ -n "$token" ]] || { valid=0; break; }
+            [[ "$token" =~ ^[0-9]+$ ]] || { valid=0; break; }
+            token_num=$((10#$token))
+            if (( token_num < 1 || token_num > ${#NODES[@]} )); then
                 valid=0
+                break
             fi
         done
         if (( valid == 0 )); then
@@ -170,8 +178,9 @@ select_nodes() {
             continue
         fi
         for token in "${TOKENS[@]}"; do
-            if ! array_contains "$token" "${SELECTED_IDS[@]}"; then
-                SELECTED_IDS+=("$token")
+            token_num=$((10#$token))
+            if ! array_contains "$token_num" "${SELECTED_IDS[@]}"; then
+                SELECTED_IDS+=("$token_num")
             fi
         done
         [ ${#SELECTED_IDS[@]} -gt 0 ] && break
@@ -380,7 +389,7 @@ start_background_task() {
     save_task_env
 
     : > "$DAEMON_STDOUT"
-    nohup bash "$SELF_PATH" --daemon-run >> "$DAEMON_STDOUT" 2>&1 &
+    nohup "$SELF_PATH" --daemon-run >> "$DAEMON_STDOUT" 2>&1 &
     local pid=$!
     echo "$pid" > "$PID_FILE"
     sleep 2
