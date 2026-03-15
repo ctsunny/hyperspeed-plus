@@ -9,7 +9,7 @@ CYAN='\033[0;36m'
 ENDC='\033[0m'
 
 SCRIPT_NAME='HyperSpeed Plus'
-SCRIPT_VERSION='6.4.0'
+SCRIPT_VERSION='6.5.0'
 BASE_DIR="${HOME}/.hyperspeed-plus"
 LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
@@ -35,7 +35,6 @@ cdn_urls=("https://cdn0.spiritlhl.top/" "http://cdn1.spiritlhl.net/" "http://cdn
 
 mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR" "$BIN_DIR"
 
-# 格式: tool|group|location|isp|server_id|dl_b64|ul_b64
 NODES=(
 'bimc|电信|上海|电信||aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQK|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkCg=='
 'bimc|电信|江苏镇江5G|电信||aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvZG93bmxvYWQ=|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvdXBsb2Fk'
@@ -143,27 +142,86 @@ ecs_install_speedtest() {
     mkdir -p "${ECS_CLI_DIR}"
     cd /root || return 1
     echo -e "${CYAN}下载 speedtest 工具 (${sys_bit})...${ENDC}"
-    local url1="https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-${sys_bit}.tgz"
-    local url2="https://dl.lamp.sh/files/ookla-speedtest-1.2.0-linux-${sys_bit}.tgz"
-    curl --fail -sL -m 20 -o /root/speedtest.tgz "${url1}" 2>/dev/null || \
-        curl --fail -sL -m 20 -o /root/speedtest.tgz "${url2}" 2>/dev/null
-    if [ -f "/root/speedtest.tgz" ]; then
-        tar -zxf /root/speedtest.tgz -C "${ECS_CLI_DIR}" && chmod 777 "${ECS_CLI_DIR}/speedtest"
-        rm -f /root/speedtest.tgz
-    else
-        echo -e "${YELLOW}官方工具失败，尝试 speedtest-go...${ENDC}"
-        local go_bit="$sys_bit"; [ "$go_bit" = "aarch64" ] && go_bit="arm64"
-        local url3="https://github.com/showwin/speedtest-go/releases/download/v${Speedtest_Go_version}/speedtest-go_${Speedtest_Go_version}_Linux_${go_bit}.tar.gz"
-        curl --fail -sL -m 30 -o /root/speedtest.tar.gz "${url3}" 2>/dev/null || \
-            [ -n "$cdn_success_url" ] && curl --fail -sL -m 30 -o /root/speedtest.tar.gz "${cdn_success_url}${url3}" 2>/dev/null
-        if [ -f "/root/speedtest.tar.gz" ]; then
-            tar -zxf /root/speedtest.tar.gz -C "${ECS_CLI_DIR}" && chmod 777 "${ECS_CLI_DIR}/speedtest-go"
-            rm -f /root/speedtest.tar.gz
-        else
-            echo -e "${RED}speedtest 工具下载失败${ENDC}"; return 1
+    local installed=0
+    # 优先安装 speedtest-go（无需许可证，后台更稳定）
+    local go_bit="$sys_bit"; [ "$go_bit" = "aarch64" ] && go_bit="arm64"
+    local url_go="https://github.com/showwin/speedtest-go/releases/download/v${Speedtest_Go_version}/speedtest-go_${Speedtest_Go_version}_Linux_${go_bit}.tar.gz"
+    curl --fail -sL -m 30 -o /root/speedtest.tar.gz "${url_go}" 2>/dev/null
+    if [ -f "/root/speedtest.tar.gz" ] && tar -tzf /root/speedtest.tar.gz >/dev/null 2>&1; then
+        tar -zxf /root/speedtest.tar.gz -C "${ECS_CLI_DIR}" 2>/dev/null
+        rm -f /root/speedtest.tar.gz
+        [ -f "${ECS_CLI_DIR}/speedtest-go" ] && chmod 777 "${ECS_CLI_DIR}/speedtest-go" && installed=1
+    fi
+    if (( installed == 0 )); then
+        # fallback: ookla 官方 CLI
+        local url1="https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-${sys_bit}.tgz"
+        local url2="https://dl.lamp.sh/files/ookla-speedtest-1.2.0-linux-${sys_bit}.tgz"
+        curl --fail -sL -m 20 -o /root/speedtest.tgz "${url1}" 2>/dev/null || \
+            curl --fail -sL -m 20 -o /root/speedtest.tgz "${url2}" 2>/dev/null
+        if [ -f "/root/speedtest.tgz" ]; then
+            tar -zxf /root/speedtest.tgz -C "${ECS_CLI_DIR}" 2>/dev/null
+            rm -f /root/speedtest.tgz
+            if [ -f "${ECS_CLI_DIR}/speedtest" ]; then
+                chmod 777 "${ECS_CLI_DIR}/speedtest"
+                installed=1
+                # 预先接受许可证，避免后台运行时交互提示
+                echo -e "${CYAN}预接受 ookla 许可证...${ENDC}"
+                "${ECS_CLI_DIR}/speedtest" --accept-license --accept-gdpr --progress=no \
+                    </dev/null >/dev/null 2>&1 || true
+            fi
         fi
     fi
-    return 0
+    if (( installed == 0 )); then
+        echo -e "${RED}speedtest 工具安装失败${ENDC}"; return 1
+    fi
+    echo -e "${GREEN}speedtest 工具安装完成${ENDC}"; return 0
+}
+
+# ── ookla 统一测速函数（前台+后台 worker 共用逻辑）──────────────────────────
+# 返回: "upload|download|latency|pkt_loss"  失败时返回 "0|0|0|NULL"
+_ookla_run_test() {
+    local server_id="$1"
+    local log_f="${ECS_CLI_DIR}/speedtest_run.log"
+    local upload="" download="" latency="" pkt_loss=""
+
+    # 优先使用 speedtest-go（更稳定，无许可证问题）
+    if [ -f "${ECS_CLI_DIR}/speedtest-go" ]; then
+        local args_go=(--ua="${BrowserUA}")
+        [ -n "$server_id" ] && args_go+=(--server="$server_id")
+        "${ECS_CLI_DIR}/speedtest-go" "${args_go[@]}" </dev/null >"$log_f" 2>&1
+        upload=$(grep -oP 'Upload:\s+\K[\d.]+' "$log_f" | head -1)
+        download=$(grep -oP 'Download:\s+\K[\d.]+' "$log_f" | head -1)
+        latency=$(grep -oP 'Latency:\s+\K[\d.]+' "$log_f" | head -1)
+        pkt_loss="NULL"
+        # speedtest-go 指定 server 失败则重试不指定
+        if [[ -z "$upload" || "$upload" == "0" ]] && [ -n "$server_id" ]; then
+            "${ECS_CLI_DIR}/speedtest-go" --ua="${BrowserUA}" </dev/null >"$log_f" 2>&1
+            upload=$(grep -oP 'Upload:\s+\K[\d.]+' "$log_f" | head -1)
+            download=$(grep -oP 'Download:\s+\K[\d.]+' "$log_f" | head -1)
+            latency=$(grep -oP 'Latency:\s+\K[\d.]+' "$log_f" | head -1)
+        fi
+    elif [ -f "${ECS_CLI_DIR}/speedtest" ]; then
+        local args_ok=(--progress=no --accept-license --accept-gdpr --format=human-readable)
+        [ -n "$server_id" ] && args_ok+=(-s "$server_id")
+        # </dev/null 解决后台无 TTY 时卡住问题；不判断退出码，直接解析输出
+        "${ECS_CLI_DIR}/speedtest" "${args_ok[@]}" </dev/null >"$log_f" 2>&1
+        upload=$(grep -oP '(?:Upload|upload):\s+\K[\d.]+' "$log_f" | head -1)
+        download=$(grep -oP '(?:Download|download):\s+\K[\d.]+' "$log_f" | head -1)
+        latency=$(grep -oP '(?:Idle )?Latency:\s+\K[\d.]+' "$log_f" | head -1)
+        pkt_loss=$(awk -F':\s*' '/Packet Loss/{v=$2; gsub(/[[:space:]%]/,"",v); print (v==""||v=="Notavailable.")?"NULL":v"%"}' "$log_f")
+        # ookla 指定 server 失败则重试不指定
+        if [[ -z "$upload" || "$upload" == "0" ]] && [ -n "$server_id" ]; then
+            "${ECS_CLI_DIR}/speedtest" --progress=no --accept-license --accept-gdpr \
+                --format=human-readable </dev/null >"$log_f" 2>&1
+            upload=$(grep -oP '(?:Upload|upload):\s+\K[\d.]+' "$log_f" | head -1)
+            download=$(grep -oP '(?:Download|download):\s+\K[\d.]+' "$log_f" | head -1)
+            latency=$(grep -oP '(?:Idle )?Latency:\s+\K[\d.]+' "$log_f" | head -1)
+        fi
+    fi
+
+    upload="${upload:-0}"; download="${download:-0}"
+    latency="${latency:-0}"; pkt_loss="${pkt_loss:-NULL}"
+    echo "${upload}|${download}|${latency}|${pkt_loss}"
 }
 
 ecs_get_data() {
@@ -242,7 +300,7 @@ ecs_get_nearest_data() {
     echo "${sorted_data[0]:-}"
 }
 
-# ── 参数配置（节点选择之前完成）────────────────────────────────────────────────
+# ── 参数配置 ──────────────────────────────────────────────────────────────────
 
 get_thread_option() {
     read -r -p "启用八线程测速? [y/N]: " ans
@@ -270,7 +328,7 @@ get_duration_option() {
     INTERVAL_SECONDS=$(awk "BEGIN{printf \"%d\", $INTERVAL_MINUTES*60}")
 }
 
-# ── 节点选择（放在最后，选完即自动启动）────────────────────────────────────────
+# ── 节点选择 ──────────────────────────────────────────────────────────────────
 
 show_nodes() {
     echo
@@ -385,14 +443,12 @@ select_nodes() {
         echo -e "${RED}未选择任何节点，请重新输入${ENDC}"
     done
 
-    # 如有 ookla 节点，确保工具已安装
     local has_ookla=0
     for id in "${SELECTED_IDS[@]}"; do
         [[ "${NODES[$((id-1))]}" == ookla* ]] && { has_ookla=1; break; }
     done
     (( has_ookla == 1 )) && ecs_install_speedtest
 
-    # 汇总已选节点
     echo
     echo -e "${PURPLE}━━━━━━━━━━━━━━━━ 已选节点 ━━━━━━━━━━━━━━━━${ENDC}"
     local id entry tool group location
@@ -403,7 +459,7 @@ select_nodes() {
     echo -e "${PURPLE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${ENDC}"
 }
 
-# ── 日志 / 测速核心 ──────────────────────────────────────────────────────────
+# ── 日志 / 测速核心 ───────────────────────────────────────────────────────────
 
 new_log_files() {
     local ts; ts=$(date '+%Y%m%d-%H%M%S')
@@ -452,32 +508,11 @@ run_single_test() {
     now=$(date '+%F %T')
 
     if [[ "$tool" == "ookla" ]]; then
-        local log_f="${ECS_CLI_DIR}/speedtest.log"
-        mkdir -p "${ECS_CLI_DIR}"
-        if [ -f "${ECS_CLI_DIR}/speedtest" ]; then
-            local args=(--progress=no --accept-license --accept-gdpr)
-            [ -n "$server_id" ] && args+=(--server-id="$server_id")
-            "${ECS_CLI_DIR}/speedtest" "${args[@]}" >"$log_f" 2>&1
-            if [ $? -eq 0 ]; then
-                upload=$(awk '/Upload/{print $2}' "$log_f")
-                download=$(awk '/Download/{print $2}' "$log_f")
-                latency=$(grep -oP 'Idle Latency:\s+\K[\d\.]+' "$log_f")
-                pkt_loss=$(awk -F': +' '/Packet Loss/{if($2=="Not available."){print "NULL"}else{print $2}}' "$log_f")
-            fi
-        elif [ -f "${ECS_CLI_DIR}/speedtest-go" ]; then
-            local args2=(--ua="${BrowserUA}")
-            [ -n "$server_id" ] && args2+=(--server="$server_id")
-            "${ECS_CLI_DIR}/speedtest-go" "${args2[@]}" >"$log_f" 2>&1
-            if [ $? -eq 0 ]; then
-                upload=$(grep -oP 'Upload: \K[\d\.]+' "$log_f")
-                download=$(grep -oP 'Download: \K[\d\.]+' "$log_f")
-                latency=$(grep -oP 'Latency: \K[\d\.]+' "$log_f")
-                pkt_loss="NULL"
-            fi
-        fi
-        upload="${upload:-0}"; download="${download:-0}"
-        latency="${latency:-0}"; jitter="0"; pkt_loss="${pkt_loss:-NULL}"
-        if [[ "$upload" != "0" && "$download" != "0" ]]; then
+        local result
+        result=$(_ookla_run_test "$server_id")
+        IFS='|' read -r upload download latency pkt_loss <<< "$result"
+        jitter="0"
+        if [[ "${upload}" != "0" && "${download}" != "0" ]]; then
             up_status="正常"; down_status="正常"; color="$GREEN"
         else
             up_status="失败"; down_status="失败"; color="$RED"
@@ -571,6 +606,47 @@ prepare_bimc() {
     chmod +x "$BINARY"
 }
 
+_ookla_run_test() {
+    local server_id="$1"
+    local log_f="${ECS_CLI_DIR}/speedtest_run.log"
+    local upload="" download="" latency="" pkt_loss=""
+
+    if [ -f "${ECS_CLI_DIR}/speedtest-go" ]; then
+        local args_go=(--ua="${BrowserUA}")
+        [ -n "$server_id" ] && args_go+=(--server="$server_id")
+        "${ECS_CLI_DIR}/speedtest-go" "${args_go[@]}" </dev/null >"$log_f" 2>&1
+        upload=$(grep -oP 'Upload:\s+\K[\d.]+' "$log_f" | head -1)
+        download=$(grep -oP 'Download:\s+\K[\d.]+' "$log_f" | head -1)
+        latency=$(grep -oP 'Latency:\s+\K[\d.]+' "$log_f" | head -1)
+        pkt_loss="NULL"
+        if [[ -z "$upload" || "$upload" == "0" ]] && [ -n "$server_id" ]; then
+            "${ECS_CLI_DIR}/speedtest-go" --ua="${BrowserUA}" </dev/null >"$log_f" 2>&1
+            upload=$(grep -oP 'Upload:\s+\K[\d.]+' "$log_f" | head -1)
+            download=$(grep -oP 'Download:\s+\K[\d.]+' "$log_f" | head -1)
+            latency=$(grep -oP 'Latency:\s+\K[\d.]+' "$log_f" | head -1)
+        fi
+    elif [ -f "${ECS_CLI_DIR}/speedtest" ]; then
+        local args_ok=(--progress=no --accept-license --accept-gdpr --format=human-readable)
+        [ -n "$server_id" ] && args_ok+=(-s "$server_id")
+        "${ECS_CLI_DIR}/speedtest" "${args_ok[@]}" </dev/null >"$log_f" 2>&1
+        upload=$(grep -oP '(?:Upload|upload):\s+\K[\d.]+' "$log_f" | head -1)
+        download=$(grep -oP '(?:Download|download):\s+\K[\d.]+' "$log_f" | head -1)
+        latency=$(grep -oP '(?:Idle )?Latency:\s+\K[\d.]+' "$log_f" | head -1)
+        pkt_loss=$(awk -F':\s*' '/Packet Loss/{v=$2; gsub(/[[:space:]%]/,"",v); print (v==""||v=="Notavailable.")?"NULL":v"%"}' "$log_f")
+        if [[ -z "$upload" || "$upload" == "0" ]] && [ -n "$server_id" ]; then
+            "${ECS_CLI_DIR}/speedtest" --progress=no --accept-license --accept-gdpr \
+                --format=human-readable </dev/null >"$log_f" 2>&1
+            upload=$(grep -oP '(?:Upload|upload):\s+\K[\d.]+' "$log_f" | head -1)
+            download=$(grep -oP '(?:Download|download):\s+\K[\d.]+' "$log_f" | head -1)
+            latency=$(grep -oP '(?:Idle )?Latency:\s+\K[\d.]+' "$log_f" | head -1)
+        fi
+    fi
+
+    upload="${upload:-0}"; download="${download:-0}"
+    latency="${latency:-0}"; pkt_loss="${pkt_loss:-NULL}"
+    echo "${upload}|${download}|${latency}|${pkt_loss}"
+}
+
 new_log_files() {
     local ts; ts=$(date '+%Y%m%d-%H%M%S')
     LOG_FILE="${LOG_DIR}/hyperspeed-${ts}.log"
@@ -592,32 +668,11 @@ run_single_test() {
     now=$(date '+%F %T')
 
     if [[ "$tool" == "ookla" ]]; then
-        local log_f="${ECS_CLI_DIR}/speedtest.log"
-        mkdir -p "${ECS_CLI_DIR}"
-        if [ -f "${ECS_CLI_DIR}/speedtest" ]; then
-            local args=(--progress=no --accept-license --accept-gdpr)
-            [ -n "$server_id" ] && args+=(--server-id="$server_id")
-            "${ECS_CLI_DIR}/speedtest" "${args[@]}" >"$log_f" 2>&1
-            if [ $? -eq 0 ]; then
-                upload=$(awk '/Upload/{print $2}' "$log_f")
-                download=$(awk '/Download/{print $2}' "$log_f")
-                latency=$(grep -oP 'Idle Latency:\s+\K[\d\.]+' "$log_f")
-                pkt_loss=$(awk -F': +' '/Packet Loss/{if($2=="Not available."){print "NULL"}else{print $2}}' "$log_f")
-            fi
-        elif [ -f "${ECS_CLI_DIR}/speedtest-go" ]; then
-            local args2=(--ua="${BrowserUA}")
-            [ -n "$server_id" ] && args2+=(--server="$server_id")
-            "${ECS_CLI_DIR}/speedtest-go" "${args2[@]}" >"$log_f" 2>&1
-            if [ $? -eq 0 ]; then
-                upload=$(grep -oP 'Upload: \K[\d\.]+' "$log_f")
-                download=$(grep -oP 'Download: \K[\d\.]+' "$log_f")
-                latency=$(grep -oP 'Latency: \K[\d\.]+' "$log_f")
-                pkt_loss="NULL"
-            fi
-        fi
-        upload="${upload:-0}"; download="${download:-0}"
-        latency="${latency:-0}"; jitter="0"; pkt_loss="${pkt_loss:-NULL}"
-        if [[ "$upload" != "0" && "$download" != "0" ]]; then
+        local result
+        result=$(_ookla_run_test "$server_id")
+        IFS='|' read -r upload download latency pkt_loss <<< "$result"
+        jitter="0"
+        if [[ "${upload}" != "0" && "${download}" != "0" ]]; then
             up_status="正常"; down_status="正常"
         else
             up_status="失败"; down_status="失败"
@@ -674,43 +729,31 @@ WORKEREOF
 
 # ── 前台 / 后台启动 ───────────────────────────────────────────────────────────
 
-# 前台：设置好参数再选节点，选完立即开跑
 start_foreground_task() {
     prepare_bimc
-    echo
-    echo -e "${CYAN}步骤 1/3  线程设置${ENDC}"
+    echo; echo -e "${CYAN}步骤 1/3  线程设置${ENDC}"
     get_thread_option
-    echo
-    echo -e "${CYAN}步骤 2/3  时长设置${ENDC}"
+    echo; echo -e "${CYAN}步骤 2/3  时长设置${ENDC}"
     get_duration_option
-    echo
-    echo -e "${CYAN}步骤 3/3  选择测试节点（选完自动开始）${ENDC}"
+    echo; echo -e "${CYAN}步骤 3/3  选择测试节点（选完自动开始）${ENDC}"
     select_nodes
-    echo
-    echo -e "${GREEN}▶ 所有设置完成，测速即将开始...${ENDC}"
-    sleep 1
+    echo; echo -e "${GREEN}▶ 所有设置完成，测速即将开始...${ENDC}"; sleep 1
     run_test_plan
 }
 
-# 后台：设置好参数再选节点，选完立即投入后台
 start_background_task() {
     if is_running; then
         echo -e "${YELLOW}已有后台任务运行中，PID: $(cat "$PID_FILE")${ENDC}"; return
     fi
     prepare_bimc
-    echo
-    echo -e "${CYAN}步骤 1/3  线程设置${ENDC}"
+    echo; echo -e "${CYAN}步骤 1/3  线程设置${ENDC}"
     get_thread_option
-    echo
-    echo -e "${CYAN}步骤 2/3  时长设置${ENDC}"
+    echo; echo -e "${CYAN}步骤 2/3  时长设置${ENDC}"
     get_duration_option
-    echo
-    echo -e "${CYAN}步骤 3/3  选择测试节点（选完自动启动后台）${ENDC}"
+    echo; echo -e "${CYAN}步骤 3/3  选择测试节点（选完自动启动后台）${ENDC}"
     select_nodes
-    echo
-    echo -e "${GREEN}▶ 节点选择完成，正在启动后台任务...${ENDC}"
-    save_task_env
-    write_worker_script
+    echo; echo -e "${GREEN}▶ 节点选择完成，正在启动后台任务...${ENDC}"
+    save_task_env; write_worker_script
     : > "$DAEMON_STDOUT"
     nohup bash "$WORKER_SCRIPT" >> "$DAEMON_STDOUT" 2>&1 &
     local pid=$!
@@ -721,12 +764,11 @@ start_background_task() {
         echo
         echo -e "${GREEN}╔══════════════════════════════════════════╗${ENDC}"
         echo -e "${GREEN}║  ✅  后台测速任务已成功启动              ║${ENDC}"
-        echo -e "${GREEN}║  PID: ${pid}                               ${ENDC}"
+        echo -e "${GREEN}║  PID: ${pid}$(printf '%*s' $((38-${#pid})) '')║${ENDC}"
         echo -e "${GREEN}║  现在可以安全断开 SSH，测速不会中断      ║${ENDC}"
         echo -e "${GREEN}╠══════════════════════════════════════════╣${ENDC}"
         echo -e "${GREEN}║  查看进度：主菜单选 3                    ║${ENDC}"
         echo -e "${GREEN}║  停止任务：主菜单选 4                    ║${ENDC}"
-        echo -e "${GREEN}║  日志路径：${DAEMON_STDOUT}${ENDC}"
         echo -e "${GREEN}╚══════════════════════════════════════════╝${ENDC}"
     else
         echo -e "${RED}后台任务启动失败，错误信息:${ENDC}"
@@ -822,14 +864,13 @@ generate_summary_report() {
     {time=trim($1);round=trim($2);group=trim($3);node=trim($6);
      up=trim($7)+0;us=trim($8);down=trim($9)+0;ds=trim($10);lat=trim($11)+0;jit=trim($12)+0;
      total++;round_seen[round]=1;if(st=="")st=time;et=time;
-     gt[group]++;nk=group"|"node;nt[nk]++;
+     gt[group]++;nk=group"|"node;
      if(us=="正常")up_ok++;if(ds=="正常")down_ok++;
      if(us=="失败"||ds=="失败")fail++;
-     if(us=="正常"&&ds=="正常"){success++;go[group]++;no[nk]++;
+     if(us=="正常"&&ds=="正常"){success++;go[group]++;
        up_sum+=up;dn_sum+=down;lt_sum+=lat;
        up_sq+=up*up;dn_sq+=down*down;lt_sq+=lat*lat;
        if(bd==""||down>bdv){bd=nk;bdv=down;}if(bu==""||up>buv){bu=nk;buv=up;}if(bl==""||lat<blv){bl=nk;blv=lat;}
-       nups[nk]+=up;ndns[nk]+=down;nlts[nk]+=lat;ndo[nk]++;
        gups[group]+=up;gdns[group]+=down;glts[group]+=lat;gdo[group]++;}}
     END{rounds=0;for(r in round_seen)rounds++;
         print "———————————————— 分析报告 ————————————————";
@@ -995,25 +1036,12 @@ _ecs_run_list() {
     for item in "$@"; do
         local sid; sid=$(echo "$item" | cut -d',' -f1)
         local name; name=$(echo "$item" | cut -d',' -f2)
-        mkdir -p "${ECS_CLI_DIR}"
-        if [ -f "${ECS_CLI_DIR}/speedtest" ]; then
-            local args=(--progress=no --accept-license --accept-gdpr)
-            [ -n "$sid" ] && args+=(--server-id="$sid")
-            "${ECS_CLI_DIR}/speedtest" "${args[@]}" > "${ECS_CLI_DIR}/speedtest.log" 2>&1
-            local dl; dl=$(awk '/Download/{print $2" "$3}' "${ECS_CLI_DIR}/speedtest.log")
-            local up; up=$(awk '/Upload/{print $2" "$3}' "${ECS_CLI_DIR}/speedtest.log")
-            local lat; lat=$(grep -oP 'Idle Latency:\s+\K[\d\.]+' "${ECS_CLI_DIR}/speedtest.log")
-            local pkt; pkt=$(awk -F': +' '/Packet Loss/{if($2=="Not available."){print "NULL"}else{print $2}}' "${ECS_CLI_DIR}/speedtest.log")
-            [ -n "$dl" ] && echo -e "${name}\t ↑${up}\t ↓${dl}\t ↕${lat}ms\t 丢包:${pkt}"
-        elif [ -f "${ECS_CLI_DIR}/speedtest-go" ]; then
-            local args2=(--ua="${BrowserUA}")
-            [ -n "$sid" ] && args2+=(--server="$sid")
-            "${ECS_CLI_DIR}/speedtest-go" "${args2[@]}" > "${ECS_CLI_DIR}/speedtest.log" 2>&1
-            local dl; dl=$(grep -oP 'Download: \K[\d\.]+' "${ECS_CLI_DIR}/speedtest.log")
-            local up; up=$(grep -oP 'Upload: \K[\d\.]+' "${ECS_CLI_DIR}/speedtest.log")
-            local lat; lat=$(grep -oP 'Latency: \K[\d\.]+' "${ECS_CLI_DIR}/speedtest.log")
-            [ -n "$dl" ] && echo -e "${name}\t ↑${up}Mbps\t ↓${dl}Mbps\t ↕${lat}ms"
-        fi
+        local result
+        result=$(_ookla_run_test "$sid")
+        local ul dl lat pkt
+        IFS='|' read -r ul dl lat pkt <<< "$result"
+        printf '%-20s ↑%-12s ↓%-12s ↕%-10s 丢包:%s\n' \
+            "$name" "${ul}Mbps" "${dl}Mbps" "${lat}ms" "$pkt"
     done
 }
 
@@ -1021,7 +1049,7 @@ run_ecsspeed_test() {
     ecs_check_cdn_file
     ecs_install_speedtest || { echo -e "${RED}speedtest 工具安装失败${ENDC}"; return 1; }
     echo
-    echo "  三网/国际 speedtest.net 节点测速（每类最优1个）"
+    echo "  三网/国际 speedtest.net 节点测速"
     echo "——————————————————————————————————————————————————————————————————————————————"
     echo -e "  ${GREEN}1.${ENDC} 三网就近    ${GREEN}2.${ENDC} 三网全测    ${GREEN}3.${ENDC} 联通    ${GREEN}4.${ENDC} 电信"
     echo -e "  ${GREEN}5.${ENDC} 移动        ${GREEN}6.${ENDC} 香港        ${GREEN}7.${ENDC} 台湾    ${GREEN}8.${ENDC} 日本    ${GREEN}9.${ENDC} 新加坡"
@@ -1031,18 +1059,15 @@ run_ecsspeed_test() {
     while true; do read -r -p "请选择: " sel; [[ "$sel" =~ ^[0-9]$ ]] && break; echo -e "${RED}无效${ENDC}"; done
     [[ "$sel" == "0" ]] && return
     echo "——————————————————————————————————————————————————————————————————————————————"
-    echo -e "位置\t\t 上传\t\t 下载\t\t 延迟\t  丢包率"
+    printf '%-20s %-14s %-14s %-12s %s\n' "位置" "上传" "下载" "延迟" "丢包率"
     local ts; ts=$(date +%s)
-    local u=() t=() m=()
     case "$sel" in
-        1) u=($(ecs_get_nearest_data "${SERVER_BASE_URL}/CN_Unicom.csv"))
-           t=($(ecs_get_nearest_data "${SERVER_BASE_URL}/CN_Telecom.csv"))
-           m=($(ecs_get_nearest_data "${SERVER_BASE_URL}/CN_Mobile.csv"))
-           _ecs_run_list "${u[@]}"; _ecs_run_list "${t[@]}"; _ecs_run_list "${m[@]}" ;;
-        2) u=($(ecs_get_data "${SERVER_BASE_URL}/CN_Unicom.csv"))
-           t=($(ecs_get_data "${SERVER_BASE_URL}/CN_Telecom.csv"))
-           m=($(ecs_get_data "${SERVER_BASE_URL}/CN_Mobile.csv"))
-           _ecs_run_list "${u[@]}"; _ecs_run_list "${t[@]}"; _ecs_run_list "${m[@]}" ;;
+        1) _ecs_run_list $(ecs_get_nearest_data "${SERVER_BASE_URL}/CN_Unicom.csv")
+           _ecs_run_list $(ecs_get_nearest_data "${SERVER_BASE_URL}/CN_Telecom.csv")
+           _ecs_run_list $(ecs_get_nearest_data "${SERVER_BASE_URL}/CN_Mobile.csv") ;;
+        2) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/CN_Unicom.csv")
+           _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/CN_Telecom.csv")
+           _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/CN_Mobile.csv") ;;
         3) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/CN_Unicom.csv")  ;;
         4) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/CN_Telecom.csv") ;;
         5) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/CN_Mobile.csv")  ;;
