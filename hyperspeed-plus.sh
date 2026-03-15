@@ -9,7 +9,7 @@ CYAN='\033[0;36m'
 ENDC='\033[0m'
 
 SCRIPT_NAME='HyperSpeed Plus'
-SCRIPT_VERSION='6.6.0'
+SCRIPT_VERSION='6.8.0'
 BASE_DIR="${HOME}/.hyperspeed-plus"
 LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
@@ -18,7 +18,6 @@ RUN_DIR="${BASE_DIR}/run"
 BIN_DIR="${BASE_DIR}/bin"
 WORKER_SCRIPT="${RUN_DIR}/worker.sh"
 BINARY="${WORK_DIR}/bimc"
-LIBRESPEED_BIN="${BIN_DIR}/librespeed-cli"
 THREAD_FLAG=''
 
 PID_FILE="${RUN_DIR}/hyperspeed.pid"
@@ -27,31 +26,62 @@ DAEMON_STDOUT="${RUN_DIR}/daemon.out"
 LAST_LOG_FILE="${RUN_DIR}/last_log_path"
 LAST_CSV_FILE="${RUN_DIR}/last_csv_path"
 
-Librespeed_version="0.0.11"
-cdn_success_url=""
-cdn_urls=("https://cdn0.spiritlhl.top/" "http://cdn1.spiritlhl.net/" "http://cdn2.spiritlhl.net/" "http://cdn3.spiritlhl.net/" "http://cdn4.spiritlhl.net/")
-
 mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR" "$BIN_DIR"
 
 # ── 节点定义 ──────────────────────────────────────────────────────────────────
-# 格式: tool|group|location|isp|dl_url|ul_url
-# tool: bimc=bimc二进制测速  libre=librespeed-cli测速  curl=curl裸HTTP测速
-# bimc节点: dl_url=下载base64  ul_url=上传base64
-# libre/curl节点: dl_url=服务器下载地址  ul_url=服务器上传地址
+# 格式: tool|group|location|isp|dl_url_b64|ul_url_b64
+#
+# 所有国内节点均来自 speedtest.net 官方运营商 mini server（ookla协议）
+# 服务器地址来源: github.com/holotr/57f19258284da2376b902657c098b6ed
+# bimc 工具兼容标准 ookla mini server HTTP 协议
+#
+# 下载地址 = http://HOST:8080/speedtest/random350x350.jpg  (bimc自动拼接)
+# 上传地址 = http://HOST:8080/speedtest/upload.php         (bimc自动拼接)
+
+_b64() { printf '%s' "$1" | base64 -w0; }
+
+# ── 预先计算好的 base64（直接硬编码，避免运行时依赖）──
+# 格式: bimc工具接受完整 dl/ul URL 的base64
 
 NODES=(
-# ── bimc 高精度节点 ──
-'bimc|电信|上海|电信|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQK|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkCg=='
-'bimc|电信|江苏镇江5G|电信|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvZG93bmxvYWQ=|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvdXBsb2Fk'
-'bimc|电信|江苏南京5G|电信|aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL3VwbG9hZAo='
-'bimc|港澳台日韩|环电宽频|香港|aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL3VwbG9hZAo='
-'bimc|港澳台日韩|中华电信|台北|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL3VwbG9hZAo='
-# ── librespeed 国内三网节点（HTTP直连，不需要外部工具账号）──
-'libre|联通|郑州5G|联通河南|http://5gtest.shangdu.com:8080/garbage.php|http://5gtest.shangdu.com:8080/empty.php'
-'libre|联通|北京|联通北京|http://speedtest.bjtelecom.net:8080/garbage.php|http://speedtest.bjtelecom.net:8080/empty.php'
-'libre|电信|浙江|电信浙江|http://speedtest.zjtel.net.cn:8080/garbage.php|http://speedtest.zjtel.net.cn:8080/empty.php'
-'libre|移动|苏州5G|移动苏州|http://speedtest.js.chinamobile.com:8080/garbage.php|http://speedtest.js.chinamobile.com:8080/empty.php'
-'libre|移动|北京|移动北京|http://speedtest.bj.chinamobile.com:8080/garbage.php|http://speedtest.bj.chinamobile.com:8080/empty.php'
+# ═══════════════ 电信 ═══════════════
+# 上海电信 (ID:3633) China Telecom Shanghai
+'bimc|电信|上海|电信|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkLnBocA=='
+# 江苏南京5G电信 (ID:26352) China Telecom JiangSu 5G
+'bimc|电信|江苏南京5G|电信|aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL2Rvd25sb2Fk|aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL3VwbG9hZC5waHA='
+# 安徽合肥电信5G (ID:17145) China Telecom AnHui 5G
+'bimc|电信|安徽合肥5G|电信|aHR0cDovL3NwZWVkdGVzdDEuYWgxNjMuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEuYWgxNjMuY29tOjgwODAvdXBsb2FkLnBocA=='
+# 重庆电信 (ID:19076) China Telecom Chongqing
+'bimc|电信|重庆|电信|aHR0cDovL3NwZWVkLmNxdGVsZWNvbS5jb20uY246ODA4MC9kb3dubG9hZA==|aHR0cDovL3NwZWVkLmNxdGVsZWNvbS5jb20uY246ODA4MC91cGxvYWQucGhw'
+# 四川成都电信 (ID:29071) China Telecom Sichuan
+'bimc|电信|四川成都|电信|aHR0cDovL3NwZWVkdGVzdDEuc2MuMTg5LmNuOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEuc2MuMTg5LmNuOjgwODAvdXBsb2FkLnBocA=='
+# ═══════════════ 联通 ═══════════════
+# 上海联通5G (ID:24447) China Unicom Shanghai 5G
+'bimc|联通|上海5G|联通|aHR0cDovLzVnLnNodW5pY29tdGVzdC5jb206ODA4MC9kb3dubG9hZA==|aHR0cDovLzVnLnNodW5pY29tdGVzdC5jb206ODA4MC91cGxvYWQucGhw'
+# 江苏南京联通 (ID:13704) China Unicom Jiangsu
+'bimc|联通|江苏南京|联通|aHR0cDovL3NwZWVkdGVzdDAyLmpzMTY1LmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovL3NwZWVkdGVzdDAyLmpzMTY1LmNvbTo4MDgwL3VwbG9hZC5waHA='
+# 湖北武汉联通 (ID:5485) China Unicom Hubei
+'bimc|联通|湖北武汉|联通|aHR0cDovLzExMy41Ny4yNDkuMjo4MDgwL2Rvd25sb2Fk|aHR0cDovLzExMy41Ny4yNDkuMjo4MDgwL3VwbG9hZC5waHA='
+# 陕西西安联通 (ID:4863) China Unicom Xi'an
+'bimc|联通|陕西西安|联通|aHR0cDovL3hhd29yay53by14YS5jb206ODA4MC9kb3dubG9hZA==|aHR0cDovL3hhd29yay53by14YS5jb206ODA4MC91cGxvYWQucGhw'
+# 北京联通 (ID:5145) Beijing Unicom
+'bimc|联通|北京|联通|aHR0cDovL3d3dzIudW5pY29tdGVzdC5jb206ODA4MC9kb3dubG9hZA==|aHR0cDovL3d3dzIudW5pY29tdGVzdC5jb206ODA4MC91cGxvYWQucGhw'
+# ═══════════════ 移动 ═══════════════
+# 上海移动5G (ID:25637) ChinaMobile Shanghai 5G
+'bimc|移动|上海5G|移动|aHR0cDovL3NwZWVkdGVzdDQuc2guY2hpbmFtb2JpbGUuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDQuc2guY2hpbmFtb2JpbGUuY29tOjgwODAvdXBsb2FkLnBocA=='
+# 江苏移动5G (ID:27249) China Mobile Jiangsu 5G
+'bimc|移动|江苏南京5G|移动|aHR0cDovL293YS5lYXN0Y29tLXN3LmNvbTo4MDgwL2Rvd25sb2Fk|aHR0cDovL293YS5lYXN0Y29tLXN3LmNvbTo4MDgwL3VwbG9hZC5waHA='
+# 浙江杭州移动 (ID:4647) China Mobile Zhejiang
+'bimc|移动|浙江杭州|移动|aHR0cDovL2x0ZXRlc3QxLjEzOXNpdGUuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL2x0ZXRlc3QxLjEzOXNpdGUuY29tOjgwODAvdXBsb2FkLnBocA=='
+# 湖北武汉移动5G (ID:29353) China Mobile Wuhan 5G
+'bimc|移动|湖北武汉5G|移动|aHR0cDovL3ZpcHNwZWVkdGVzdDgud3VoYW4ubmV0LmNuOjgwODAvZG93bmxvYWQ=|aHR0cDovL3ZpcHNwZWVkdGVzdDgud3VoYW4ubmV0LmNuOjgwODAvdXBsb2FkLnBocA=='
+# 四川成都移动 (ID:4575) China Mobile Sichuan
+'bimc|移动|四川成都|移动|aHR0cDovL3NwZWVkdGVzdDEuc2MuY2hpbmFtb2JpbGUuY29tOjgwODAvZG93bmxvYWQ=|aHR0cDovL3NwZWVkdGVzdDEuc2MuY2hpbmFtb2JpbGUuY29tOjgwODAvdXBsb2FkLnBocA=='
+# ═══════════════ 港台 ═══════════════
+# 香港环电宽频
+'bimc|港澳台|香港环电宽频|香港|aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL2Rvd25sb2Fk|aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL3VwbG9hZC5waHA='
+# 台北中华电信 (ID:18445) Chunghwa Mobile
+'bimc|港澳台|台北中华电信|台湾|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL2Rvd25sb2Fk|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL3VwbG9hZC5waHA='
 )
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
@@ -87,40 +117,12 @@ prepare_bimc() {
     fi
 }
 
-prepare_librespeed() {
-    [ -x "$LIBRESPEED_BIN" ] && return 0
-    local arch; arch=$(uname -m)
-    local go_arch
-    case "$arch" in
-        x86_64|amd64)      go_arch="amd64" ;;
-        aarch64|arm64)     go_arch="arm64" ;;
-        armv7l|armv7)      go_arch="armv7" ;;
-        i386|i686)         go_arch="386"   ;;
-        *)                 go_arch="amd64" ;;
-    esac
-    echo -e "${CYAN}正在安装 librespeed-cli (${go_arch})...${ENDC}"
-    local base_url="https://github.com/librespeed/speedtest-cli/releases/download/v${Librespeed_version}"
-    local fname="librespeed-cli_${Librespeed_version}_linux_${go_arch}.tar.gz"
-    local tmp_tgz="${BIN_DIR}/librespeed.tar.gz"
-    download_file "${base_url}/${fname}" "$tmp_tgz" 2>/dev/null
-    if [ -f "$tmp_tgz" ] && tar -tzf "$tmp_tgz" >/dev/null 2>&1; then
-        tar -xzf "$tmp_tgz" -C "$BIN_DIR" librespeed-cli 2>/dev/null || \
-            tar -xzf "$tmp_tgz" -C "$BIN_DIR" 2>/dev/null
-        rm -f "$tmp_tgz"
-        [ -f "$LIBRESPEED_BIN" ] && chmod +x "$LIBRESPEED_BIN" && \
-            echo -e "${GREEN}librespeed-cli 安装完成${ENDC}" && return 0
-    fi
-    echo -e "${YELLOW}librespeed-cli 安装失败，将使用 curl 裸速测试作为备用${ENDC}"
-    rm -f "$tmp_tgz" 2>/dev/null
-    return 1
-}
-
 print_banner() {
     clear
     echo "—————————————————————— ${SCRIPT_NAME} ${SCRIPT_VERSION} ——————————————————————"
     echo "  长时压力测速 | 后台守护 | 随机间隔 | 曲线分析 | 报告上传"
-    echo "  日志目录: ${LOG_DIR}"
-    echo "  报告目录: ${REPORT_DIR}"
+    echo "  日志: ${LOG_DIR}  报告: ${REPORT_DIR}"
+    echo "  节点来源: speedtest.net 运营商官方 mini server（电信/联通/移动/港台）"
     echo "——————————————————————————————————————————————————————————————————————————————"
 }
 
@@ -130,97 +132,12 @@ decode_b64() { printf '%s' "$1" | base64 -d 2>/dev/null | tr -d '\r\n'; }
 
 random_wait_seconds() {
     local max="$1"
-    if (( max <= 1 )); then echo 1; return; fi
-    if command_exists shuf; then shuf -i 1-"$max" -n 1
-    else echo $(( RANDOM % max + 1 )); fi
+    (( max <= 1 )) && echo 1 && return
+    command_exists shuf && shuf -i 1-"$max" -n 1 || echo $(( RANDOM % max + 1 ))
 }
-
-# ── librespeed / curl 裸速测速核心 ───────────────────────────────────────────
-# 返回: "upload_mbps|download_mbps|latency_ms|jitter_ms"
-# 失败返回: "0|0|0|0"
-
-_curl_http_speedtest() {
-    local dl_url="$1" ul_url="$2"
-    local dl_mbps=0 ul_mbps=0 lat_ms=0 jit_ms=0
-
-    # --- 延迟测试 (5次 HTTP ping) ---
-    local lat_sum=0 lat_sq=0 lat_cnt=0 lat_t
-    for _i in 1 2 3 4 5; do
-        lat_t=$(curl -o /dev/null -s -w "%{time_total}" --max-time 5 \
-            "${dl_url%garbage.php}empty.php" 2>/dev/null || echo "0")
-        if [[ "$lat_t" != "0" && -n "$lat_t" ]]; then
-            local lat_ms_i; lat_ms_i=$(awk "BEGIN{printf \"%.2f\", $lat_t*1000}")
-            lat_sum=$(awk "BEGIN{printf \"%.2f\", $lat_sum + $lat_ms_i}")
-            lat_sq=$(awk  "BEGIN{printf \"%.2f\", $lat_sq + $lat_ms_i*$lat_ms_i}")
-            lat_cnt=$((lat_cnt+1))
-        fi
-    done
-    if (( lat_cnt > 0 )); then
-        lat_ms=$(awk "BEGIN{printf \"%.1f\", $lat_sum/$lat_cnt}")
-        if (( lat_cnt > 1 )); then
-            jit_ms=$(awk "BEGIN{v=($lat_sq/$lat_cnt)-($lat_sum/$lat_cnt)^2; if(v<0)v=0; printf \"%.1f\",sqrt(v)}")
-        fi
-    fi
-
-    # --- 下载测试 (拉取 ~50MB 垃圾数据) ---
-    local dl_result
-    dl_result=$(curl -o /dev/null -s -w "%{time_total},%{size_download}" \
-        --max-time 20 "${dl_url}?ckSize=50" 2>/dev/null)
-    if [[ -n "$dl_result" ]]; then
-        local dl_time dl_bytes
-        dl_time=$(echo "$dl_result" | cut -d',' -f1)
-        dl_bytes=$(echo "$dl_result" | cut -d',' -f2)
-        if awk "BEGIN{exit !($dl_time>0 && $dl_bytes>0)}"; then
-            dl_mbps=$(awk "BEGIN{printf \"%.2f\", ($dl_bytes*8)/($dl_time*1000000)}")
-        fi
-    fi
-
-    # --- 上传测试 (POST ~20MB 数据) ---
-    local ul_result
-    ul_result=$(dd if=/dev/urandom bs=1M count=20 2>/dev/null | \
-        curl -o /dev/null -s -w "%{time_total},%{size_upload}" \
-        --max-time 20 -X POST -H "Content-Type: application/octet-stream" \
-        --data-binary @- "$ul_url" 2>/dev/null)
-    if [[ -n "$ul_result" ]]; then
-        local ul_time ul_bytes
-        ul_time=$(echo "$ul_result" | cut -d',' -f1)
-        ul_bytes=$(echo "$ul_result" | cut -d',' -f2)
-        if awk "BEGIN{exit !($ul_time>0 && $ul_bytes>0)}"; then
-            ul_mbps=$(awk "BEGIN{printf \"%.2f\", ($ul_bytes*8)/($ul_time*1000000)}")
-        fi
-    fi
-
-    echo "${ul_mbps}|${dl_mbps}|${lat_ms}|${jit_ms}"
-}
-
-_librespeed_test() {
-    local dl_url="$1" ul_url="$2"
-    # 构建临时 server JSON
-    local srv_base; srv_base="${dl_url%/garbage.php}"
-    local tmp_json; tmp_json=$(mktemp /tmp/ls_srv_XXXXXX.json)
-    printf '[{"id":1,"name":"test","server":"%s/","dlURL":"garbage.php","ulURL":"empty.php","pingURL":"empty.php","getIpURL":"getIP.php"}]\n' \
-        "$srv_base" > "$tmp_json"
-    local output
-    output=$("$LIBRESPEED_BIN" --local-json "$tmp_json" --no-icmp \
-        --concurrent 4 --bytes --json 2>/dev/null)
-    rm -f "$tmp_json"
-    local ul dl lat jit
-    ul=$(echo  "$output" | grep -oP '"upload":\s*\K[\d.]+' | head -1)
-    dl=$(echo  "$output" | grep -oP '"download":\s*\K[\d.]+' | head -1)
-    lat=$(echo "$output" | grep -oP '"latency":\s*\K[\d.]+' | head -1)
-    jit=$(echo "$output" | grep -oP '"jitter":\s*\K[\d.]+' | head -1)
-    # librespeed-cli --bytes 输出单位 Bytes/s → 转 Mbps
-    if [[ -n "$ul" && "$ul" != "0" ]]; then
-        ul=$(awk "BEGIN{printf \"%.2f\", $ul*8/1000000}")
-        dl=$(awk "BEGIN{printf \"%.2f\", $dl*8/1000000}")
-    fi
-    echo "${ul:-0}|${dl:-0}|${lat:-0}|${jit:-0}"
-}
-
-# ── 参数配置 ──────────────────────────────────────────────────────────────────
 
 get_thread_option() {
-    read -r -p "启用八线程测速(仅对bimc节点有效)? [y/N]: " ans
+    read -r -p "启用八线程测速? [y/N]: " ans
     [[ "$ans" =~ ^[Yy]$ ]] && THREAD_FLAG='-m' || THREAD_FLAG=''
 }
 
@@ -245,26 +162,20 @@ get_duration_option() {
     INTERVAL_SECONDS=$(awk "BEGIN{printf \"%d\", $INTERVAL_MINUTES*60}")
 }
 
-# ── 节点选择 ──────────────────────────────────────────────────────────────────
-
 show_nodes() {
     echo
-    echo "可选测试节点:"
+    echo "═══════════════════ 可选测速节点 ═══════════════════"
     local i entry tool group location isp
+    printf '  %-4s %-10s %-14s %s\n' "编号" "运营商" "位置" "服务器来源"
+    echo "  ────────────────────────────────────────────────"
     for i in "${!NODES[@]}"; do
         entry="${NODES[$i]}"
         IFS='|' read -r tool group location isp _ _ <<< "$entry"
-        local tool_label
-        case "$tool" in
-            bimc)  tool_label="bimc " ;;
-            libre) tool_label="libre" ;;
-            curl)  tool_label="curl " ;;
-            *)     tool_label="$tool " ;;
-        esac
-        printf '  %02d. [%-5s] %-12s %-16s (%s)\n' "$((i+1))" "$tool_label" "$group" "$location" "$isp"
+        printf '  %-4s %-10s %-14s %s\n' "$((i+1))." "[$group]" "$location" "($isp)"
     done
     echo
-    echo "  all=全选  1,2,3=bimc高精度  6,7,8,9,10=librespeed国内三网"
+    echo "  all=全选  1-5=电信  6-10=联通  11-15=移动  16-17=港台"
+    echo "═══════════════════════════════════════════════════"
 }
 
 select_nodes() {
@@ -273,7 +184,7 @@ select_nodes() {
     show_nodes
 
     while true; do
-        read -r -p "请选择测试节点: " input
+        read -r -p "请选择测试节点 [all/1,2,3...]: " input
         input="${input// /}"
 
         if [[ -z "$input" || "$input" == "all" ]]; then
@@ -289,7 +200,7 @@ select_nodes() {
             (( tn < 1 || tn > ${#NODES[@]} )) && { valid=0; break; }
         done
         if (( valid == 0 )); then
-            echo -e "${RED}输入无效，请输入编号（如 1,2,6,7）或 all${ENDC}"; continue
+            echo -e "${RED}输入无效，请输入编号（如 1,6,11）或 all${ENDC}"; continue
         fi
         for token in "${TOKENS[@]}"; do
             local tn=$((10#$token))
@@ -299,24 +210,17 @@ select_nodes() {
         echo -e "${RED}未选择任何节点，请重新输入${ENDC}"
     done
 
-    # 如有 libre 节点，确保工具已安装
-    local has_libre=0
-    for id in "${SELECTED_IDS[@]}"; do
-        [[ "${NODES[$((id-1))]}" == libre* ]] && { has_libre=1; break; }
-    done
-    (( has_libre == 1 )) && prepare_librespeed || true
-
     echo
     echo -e "${PURPLE}━━━━━━━━━━━━━━━━ 已选节点 ━━━━━━━━━━━━━━━━${ENDC}"
-    local id entry tool group location
+    local id entry group location
     for id in "${SELECTED_IDS[@]}"; do
-        entry="${NODES[$((id-1))]}"; IFS='|' read -r tool group location _ _ _ <<< "$entry"
-        echo -e "  ${GREEN}✓${ENDC} [${tool}] ${group} — ${location}"
+        entry="${NODES[$((id-1))]}"; IFS='|' read -r _ group location _ _ _ <<< "$entry"
+        echo -e "  ${GREEN}✓${ENDC} [${group}] ${location}"
     done
     echo -e "${PURPLE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${ENDC}"
 }
 
-# ── 日志 / 测速核心 ───────────────────────────────────────────────────────────
+# ── 日志 ──────────────────────────────────────────────────────────────────────
 
 new_log_files() {
     local ts; ts=$(date '+%Y%m%d-%H%M%S')
@@ -357,60 +261,40 @@ is_running() {
 
 run_single_test() {
     local id="$1" round="$2"
-    local entry tool group location isp dl_url ul_url
-    local upload up_status download down_status latency jitter pkt_loss now screen plain color
+    local entry group location isp dl_b64 ul_b64
+    local dl ul node_name output
+    local upload up_status download down_status latency jitter now screen plain color
 
     entry="${NODES[$((id-1))]}"
-    IFS='|' read -r tool group location isp dl_url ul_url <<< "$entry"
+    IFS='|' read -r _ group location isp dl_b64 ul_b64 <<< "$entry"
     now=$(date '+%F %T')
-    pkt_loss="NULL"
 
-    case "$tool" in
-    bimc)
-        local dl ul node_name output
-        dl=$(decode_b64 "$dl_url"); ul=$(decode_b64 "$ul_url")
-        node_name=$("$BINARY" -n "$location" 2>/dev/null)
-        [ -n "$node_name" ] || node_name="$location"
-        local cmd=("$BINARY" "$dl" "$ul")
-        [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
-        output=$("${cmd[@]}" 2>/dev/null)
-        IFS=',' read -r upload up_status download down_status latency jitter <<< "$output"
-        upload="${upload:-0}"; up_status="${up_status:-失败}"
-        download="${download:-0}"; down_status="${down_status:-失败}"
-        latency="${latency:-0}"; jitter="${jitter:-0}"
-        location="$node_name"
-        color="$GREEN"
-        [[ "$up_status" != "正常" || "$down_status" != "正常" ]] && color="$RED"
-        screen="${YELLOW}[第${round}轮]${ENDC} ${PURPLE}${group}${ENDC}|${GREEN}${location}${ENDC} ${CYAN}↑${upload}${ENDC} ${color}${up_status}${ENDC} ${CYAN}↓${download}${ENDC} ${color}${down_status}${ENDC} ${CYAN}↕${latency} ϟ${jitter}${ENDC}"
-        plain="[第${round}轮] ${group}|${location} ↑${upload} ${up_status} ↓${download} ${down_status} ↕${latency} ϟ${jitter}"
-        ;;
-    libre|curl)
-        local result
-        if [[ "$tool" == "libre" && -x "$LIBRESPEED_BIN" ]]; then
-            result=$(_librespeed_test "$dl_url" "$ul_url")
-        else
-            # curl裸速（fallback或直接选curl节点）
-            result=$(_curl_http_speedtest "$dl_url" "$ul_url")
-        fi
-        IFS='|' read -r upload download latency jitter <<< "$result"
-        upload="${upload:-0}"; download="${download:-0}"
-        latency="${latency:-0}"; jitter="${jitter:-0}"
-        local tool_label; [[ "$tool" == "libre" && -x "$LIBRESPEED_BIN" ]] && tool_label="libre" || tool_label="curl"
-        if awk "BEGIN{exit !($upload>0 && $download>0)}"; then
-            up_status="正常"; down_status="正常"; color="$GREEN"
-        else
-            up_status="失败"; down_status="失败"; color="$RED"
-        fi
-        screen="${YELLOW}[第${round}轮]${ENDC} ${PURPLE}${group}${ENDC}[${tool_label}]|${GREEN}${location}${ENDC} ${CYAN}↑${upload}Mbps ↓${download}Mbps ↕${latency}ms ϟ${jitter}ms${ENDC} ${color}${up_status}${ENDC}"
-        plain="[第${round}轮] ${group}[${tool_label}]|${location} ↑${upload}Mbps ↓${download}Mbps ↕${latency}ms ϟ${jitter}ms ${up_status}"
-        ;;
-    esac
+    dl=$(decode_b64 "$dl_b64")
+    ul=$(decode_b64 "$ul_b64")
+    node_name=$("$BINARY" -n "$location" 2>/dev/null)
+    [ -n "$node_name" ] || node_name="$location"
+
+    local cmd=("$BINARY" "$dl" "$ul")
+    [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
+    output=$("${cmd[@]}" 2>/dev/null)
+
+    IFS=',' read -r upload up_status download down_status latency jitter <<< "$output"
+    upload="${upload:-0}"; up_status="${up_status:-失败}"
+    download="${download:-0}"; down_status="${down_status:-失败}"
+    latency="${latency:-0}"; jitter="${jitter:-0}"
+    location="$node_name"
+
+    color="$GREEN"
+    [[ "$up_status" != "正常" || "$down_status" != "正常" ]] && color="$RED"
+
+    screen="${YELLOW}[第${round}轮]${ENDC} ${PURPLE}${group}${ENDC}|${GREEN}${location}${ENDC} ${CYAN}↑${upload}${ENDC} ${color}${up_status}${ENDC} ${CYAN}↓${download}${ENDC} ${color}${down_status}${ENDC} ${CYAN}↕${latency} ϟ${jitter}${ENDC}"
+    plain="[第${round}轮] ${group}|${location} ↑${upload} ${up_status} ↓${download} ${down_status} ↕${latency} ϟ${jitter}"
 
     log_line "$screen" "$plain"
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL\n' \
         "$now" "$round" "$group" "$location" "$isp" "$location" \
         "$upload" "$up_status" "$download" "$down_status" \
-        "$latency" "$jitter" "$pkt_loss" >> "$CSV_FILE"
+        "$latency" "$jitter" >> "$CSV_FILE"
 }
 
 run_test_plan() {
@@ -443,184 +327,74 @@ LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
 REPORT_DIR="${BASE_DIR}/reports"
 RUN_DIR="${BASE_DIR}/run"
-BIN_DIR="${BASE_DIR}/bin"
 BINARY="${WORK_DIR}/bimc"
-LIBRESPEED_BIN="${BIN_DIR}/librespeed-cli"
 PID_FILE="${RUN_DIR}/hyperspeed.pid"
 TASK_FILE="${RUN_DIR}/task.env"
 LAST_LOG_FILE="${RUN_DIR}/last_log_path"
 LAST_CSV_FILE="${RUN_DIR}/last_csv_path"
 mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR"
-
 [ -f "$TASK_FILE" ] || { echo "task.env not found"; exit 1; }
 source "$TASK_FILE"
 
 decode_b64() { printf '%s' "$1" | base64 -d 2>/dev/null | tr -d '\r\n'; }
-
 random_wait_seconds() {
-    local max="$1"
-    (( max <= 1 )) && echo 1 && return
-    command -v shuf >/dev/null 2>&1 && shuf -i 1-"$max" -n 1 || echo $(( RANDOM % max + 1 ))
+    local max="$1"; (( max<=1 )) && echo 1 && return
+    command -v shuf >/dev/null 2>&1 && shuf -i 1-"$max" -n 1 || echo $(( RANDOM%max+1 ))
 }
-
 prepare_bimc() {
     [ -x "$BINARY" ] && return
     local arch; arch=$(uname -m)
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "https://bench.im/bimc-${arch}" -o "$BINARY"
-    else
+    command -v curl >/dev/null 2>&1 && \
+        curl -fsSL "https://bench.im/bimc-${arch}" -o "$BINARY" || \
         wget --no-check-certificate -qO "$BINARY" "https://bench.im/bimc-${arch}"
-    fi
     chmod +x "$BINARY"
 }
-
-_curl_http_speedtest() {
-    local dl_url="$1" ul_url="$2"
-    local dl_mbps=0 ul_mbps=0 lat_ms=0 jit_ms=0
-    local lat_sum=0 lat_sq=0 lat_cnt=0 lat_t
-    for _i in 1 2 3 4 5; do
-        lat_t=$(curl -o /dev/null -s -w "%{time_total}" --max-time 5 \
-            "${dl_url%garbage.php}empty.php" 2>/dev/null || echo "0")
-        if [[ "$lat_t" != "0" && -n "$lat_t" ]]; then
-            local lat_ms_i; lat_ms_i=$(awk "BEGIN{printf \"%.2f\", $lat_t*1000}")
-            lat_sum=$(awk "BEGIN{printf \"%.2f\", $lat_sum + $lat_ms_i}")
-            lat_sq=$(awk  "BEGIN{printf \"%.2f\", $lat_sq + $lat_ms_i*$lat_ms_i}")
-            lat_cnt=$((lat_cnt+1))
-        fi
-    done
-    if (( lat_cnt > 0 )); then
-        lat_ms=$(awk "BEGIN{printf \"%.1f\", $lat_sum/$lat_cnt}")
-        if (( lat_cnt > 1 )); then
-            jit_ms=$(awk "BEGIN{v=($lat_sq/$lat_cnt)-($lat_sum/$lat_cnt)^2; if(v<0)v=0; printf \"%.1f\",sqrt(v)}")
-        fi
-    fi
-    local dl_result
-    dl_result=$(curl -o /dev/null -s -w "%{time_total},%{size_download}" \
-        --max-time 20 "${dl_url}?ckSize=50" 2>/dev/null)
-    if [[ -n "$dl_result" ]]; then
-        local dl_time dl_bytes
-        dl_time=$(echo "$dl_result" | cut -d',' -f1)
-        dl_bytes=$(echo "$dl_result" | cut -d',' -f2)
-        if awk "BEGIN{exit !($dl_time>0 && $dl_bytes>0)}"; then
-            dl_mbps=$(awk "BEGIN{printf \"%.2f\", ($dl_bytes*8)/($dl_time*1000000)}")
-        fi
-    fi
-    local ul_result
-    ul_result=$(dd if=/dev/urandom bs=1M count=20 2>/dev/null | \
-        curl -o /dev/null -s -w "%{time_total},%{size_upload}" \
-        --max-time 20 -X POST -H "Content-Type: application/octet-stream" \
-        --data-binary @- "$ul_url" 2>/dev/null)
-    if [[ -n "$ul_result" ]]; then
-        local ul_time ul_bytes
-        ul_time=$(echo "$ul_result" | cut -d',' -f1)
-        ul_bytes=$(echo "$ul_result" | cut -d',' -f2)
-        if awk "BEGIN{exit !($ul_time>0 && $ul_bytes>0)}"; then
-            ul_mbps=$(awk "BEGIN{printf \"%.2f\", ($ul_bytes*8)/($ul_time*1000000)}")
-        fi
-    fi
-    echo "${ul_mbps}|${dl_mbps}|${lat_ms}|${jit_ms}"
-}
-
-_librespeed_test() {
-    local dl_url="$1" ul_url="$2"
-    local srv_base; srv_base="${dl_url%/garbage.php}"
-    local tmp_json; tmp_json=$(mktemp /tmp/ls_srv_XXXXXX.json)
-    printf '[{"id":1,"name":"test","server":"%s/","dlURL":"garbage.php","ulURL":"empty.php","pingURL":"empty.php","getIpURL":"getIP.php"}]\n' \
-        "$srv_base" > "$tmp_json"
-    local output
-    output=$("$LIBRESPEED_BIN" --local-json "$tmp_json" --no-icmp \
-        --concurrent 4 --bytes --json 2>/dev/null)
-    rm -f "$tmp_json"
-    local ul dl lat jit
-    ul=$(echo  "$output" | grep -oP '"upload":\s*\K[\d.]+' | head -1)
-    dl=$(echo  "$output" | grep -oP '"download":\s*\K[\d.]+' | head -1)
-    lat=$(echo "$output" | grep -oP '"latency":\s*\K[\d.]+' | head -1)
-    jit=$(echo "$output" | grep -oP '"jitter":\s*\K[\d.]+' | head -1)
-    if [[ -n "$ul" && "$ul" != "0" ]]; then
-        ul=$(awk "BEGIN{printf \"%.2f\", $ul*8/1000000}")
-        dl=$(awk "BEGIN{printf \"%.2f\", $dl*8/1000000}")
-    fi
-    echo "${ul:-0}|${dl:-0}|${lat:-0}|${jit:-0}"
-}
-
 new_log_files() {
     local ts; ts=$(date '+%Y%m%d-%H%M%S')
     LOG_FILE="${LOG_DIR}/hyperspeed-${ts}.log"
     CSV_FILE="${LOG_DIR}/hyperspeed-${ts}.csv"
     printf 'time,round,group,location,isp,node_name,upload_mbps,upload_status,download_mbps,download_status,latency_ms,jitter_ms,packet_loss\n' > "$CSV_FILE"
-    echo "$LOG_FILE" > "$LAST_LOG_FILE"
-    echo "$CSV_FILE" > "$LAST_CSV_FILE"
+    echo "$LOG_FILE" > "$LAST_LOG_FILE"; echo "$CSV_FILE" > "$LAST_CSV_FILE"
 }
-
 log_line() { printf '%b\n' "$1"; printf '%b\n' "$2" >> "$LOG_FILE"; }
 
 run_single_test() {
     local id="$1" round="$2"
-    local entry tool group location isp dl_url ul_url
-    local upload up_status download down_status latency jitter pkt_loss now plain
-
-    entry="${NODES[$((id-1))]}"
-    IFS='|' read -r tool group location isp dl_url ul_url <<< "$entry"
+    local entry group location isp dl_b64 ul_b64 dl ul node_name output
+    local upload up_status download down_status latency jitter now plain
+    entry="${NODES[$((id-1))]}"; IFS='|' read -r _ group location isp dl_b64 ul_b64 <<< "$entry"
     now=$(date '+%F %T')
-    pkt_loss="NULL"
-
-    case "$tool" in
-    bimc)
-        local dl ul node_name output
-        dl=$(decode_b64 "$dl_url"); ul=$(decode_b64 "$ul_url")
-        node_name=$("$BINARY" -n "$location" 2>/dev/null)
-        [ -n "$node_name" ] || node_name="$location"
-        local cmd=("$BINARY" "$dl" "$ul")
-        [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
-        output=$("${cmd[@]}" 2>/dev/null)
-        IFS=',' read -r upload up_status download down_status latency jitter <<< "$output"
-        upload="${upload:-0}"; up_status="${up_status:-失败}"
-        download="${download:-0}"; down_status="${down_status:-失败}"
-        latency="${latency:-0}"; jitter="${jitter:-0}"
-        location="$node_name"
-        plain="[第${round}轮] ${group}|${location} ↑${upload} ${up_status} ↓${download} ${down_status} ↕${latency} ϟ${jitter}"
-        ;;
-    libre|curl)
-        local result
-        if [[ "$tool" == "libre" && -x "$LIBRESPEED_BIN" ]]; then
-            result=$(_librespeed_test "$dl_url" "$ul_url")
-        else
-            result=$(_curl_http_speedtest "$dl_url" "$ul_url")
-        fi
-        IFS='|' read -r upload download latency jitter <<< "$result"
-        upload="${upload:-0}"; download="${download:-0}"
-        latency="${latency:-0}"; jitter="${jitter:-0}"
-        local tool_label; [[ "$tool" == "libre" && -x "$LIBRESPEED_BIN" ]] && tool_label="libre" || tool_label="curl"
-        if awk "BEGIN{exit !($upload>0 && $download>0)}"; then
-            up_status="正常"; down_status="正常"
-        else
-            up_status="失败"; down_status="失败"
-        fi
-        plain="[第${round}轮] ${group}[${tool_label}]|${location} ↑${upload}Mbps ↓${download}Mbps ↕${latency}ms ϟ${jitter}ms ${up_status}"
-        ;;
-    esac
-
+    dl=$(decode_b64 "$dl_b64"); ul=$(decode_b64 "$ul_b64")
+    node_name=$("$BINARY" -n "$location" 2>/dev/null); [ -n "$node_name" ] || node_name="$location"
+    local cmd=("$BINARY" "$dl" "$ul"); [ -n "$THREAD_FLAG" ] && cmd+=("$THREAD_FLAG")
+    output=$("${cmd[@]}" 2>/dev/null)
+    IFS=',' read -r upload up_status download down_status latency jitter <<< "$output"
+    upload="${upload:-0}"; up_status="${up_status:-失败}"
+    download="${download:-0}"; down_status="${down_status:-失败}"
+    latency="${latency:-0}"; jitter="${jitter:-0}"
+    location="$node_name"
+    plain="[第${round}轮] ${group}|${location} ↑${upload} ${up_status} ↓${download} ${down_status} ↕${latency} ϟ${jitter}"
     log_line "$plain" "$plain"
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL\n' \
         "$now" "$round" "$group" "$location" "$isp" "$location" \
         "$upload" "$up_status" "$download" "$down_status" \
-        "$latency" "$jitter" "$pkt_loss" >> "$CSV_FILE"
+        "$latency" "$jitter" >> "$CSV_FILE"
 }
 
 run_test_plan() {
     trap 'rm -f "$PID_FILE"' EXIT
     new_log_files
     local end_epoch=0 now round=1 sleep_seconds
-    (( DURATION_SECONDS > 0 )) && end_epoch=$(( $(date +%s) + DURATION_SECONDS ))
+    (( DURATION_SECONDS>0 )) && end_epoch=$(( $(date +%s)+DURATION_SECONDS ))
     log_line "开始测试 日志:${LOG_FILE}" "开始测试 日志:${LOG_FILE}"
     while true; do
         log_line "———— 第 ${round} 轮 ————" "———— 第 ${round} 轮 ————"
         for id in "${SELECTED_IDS[@]}"; do run_single_test "$id" "$round"; sleep 2; done
-        (( DURATION_SECONDS == 0 )) && break
-        now=$(date +%s); (( now >= end_epoch )) && break
+        (( DURATION_SECONDS==0 )) && break
+        now=$(date +%s); (( now>=end_epoch )) && break
         sleep_seconds=$(random_wait_seconds "$INTERVAL_SECONDS")
-        (( now + sleep_seconds > end_epoch )) && sleep_seconds=$(( end_epoch - now ))
-        (( sleep_seconds <= 0 )) && break
+        (( now+sleep_seconds>end_epoch )) && sleep_seconds=$(( end_epoch-now ))
+        (( sleep_seconds<=0 )) && break
         log_line "等待 ${sleep_seconds} 秒" "等待 ${sleep_seconds} 秒"
         sleep "$sleep_seconds"; round=$((round+1))
     done
@@ -633,17 +407,12 @@ WORKEREOF
     chmod +x "$WORKER_SCRIPT"
 }
 
-# ── 前台 / 后台启动 ───────────────────────────────────────────────────────────
-
 start_foreground_task() {
     prepare_bimc
-    echo; echo -e "${CYAN}步骤 1/3  线程设置${ENDC}"
-    get_thread_option
-    echo; echo -e "${CYAN}步骤 2/3  时长设置${ENDC}"
-    get_duration_option
-    echo; echo -e "${CYAN}步骤 3/3  选择测试节点（选完自动开始）${ENDC}"
-    select_nodes
-    echo; echo -e "${GREEN}▶ 所有设置完成，测速即将开始...${ENDC}"; sleep 1
+    echo; echo -e "${CYAN}步骤 1/3  线程设置${ENDC}"; get_thread_option
+    echo; echo -e "${CYAN}步骤 2/3  时长设置${ENDC}"; get_duration_option
+    echo; echo -e "${CYAN}步骤 3/3  选择节点${ENDC}"; select_nodes
+    echo; echo -e "${GREEN}▶ 开始测速...${ENDC}"; sleep 1
     run_test_plan
 }
 
@@ -652,19 +421,13 @@ start_background_task() {
         echo -e "${YELLOW}已有后台任务运行中，PID: $(cat "$PID_FILE")${ENDC}"; return
     fi
     prepare_bimc
-    echo; echo -e "${CYAN}步骤 1/3  线程设置${ENDC}"
-    get_thread_option
-    echo; echo -e "${CYAN}步骤 2/3  时长设置${ENDC}"
-    get_duration_option
-    echo; echo -e "${CYAN}步骤 3/3  选择测试节点（选完自动启动后台）${ENDC}"
-    select_nodes
-    echo; echo -e "${GREEN}▶ 节点选择完成，正在启动后台任务...${ENDC}"
-    save_task_env; write_worker_script
-    : > "$DAEMON_STDOUT"
+    echo; echo -e "${CYAN}步骤 1/3  线程设置${ENDC}"; get_thread_option
+    echo; echo -e "${CYAN}步骤 2/3  时长设置${ENDC}"; get_duration_option
+    echo; echo -e "${CYAN}步骤 3/3  选择节点${ENDC}"; select_nodes
+    echo; echo -e "${GREEN}▶ 正在启动后台任务...${ENDC}"
+    save_task_env; write_worker_script; : > "$DAEMON_STDOUT"
     nohup bash "$WORKER_SCRIPT" >> "$DAEMON_STDOUT" 2>&1 &
-    local pid=$!
-    echo "$pid" > "$PID_FILE"
-    disown "$pid" 2>/dev/null || true
+    local pid=$!; echo "$pid" > "$PID_FILE"; disown "$pid" 2>/dev/null || true
     sleep 4
     if kill -0 "$pid" 2>/dev/null; then
         echo
@@ -677,8 +440,7 @@ start_background_task() {
         echo -e "${GREEN}║  停止任务：主菜单选 4                    ║${ENDC}"
         echo -e "${GREEN}╚══════════════════════════════════════════╝${ENDC}"
     else
-        echo -e "${RED}后台任务启动失败，错误信息:${ENDC}"
-        rm -f "$PID_FILE"
+        echo -e "${RED}后台任务启动失败:${ENDC}"; rm -f "$PID_FILE"
         [ -f "$DAEMON_STDOUT" ] && cat "$DAEMON_STDOUT"
     fi
 }
@@ -686,32 +448,29 @@ start_background_task() {
 show_status() {
     if is_running; then
         local pid; pid=$(cat "$PID_FILE")
-        echo -e "${GREEN}后台测速正在运行${ENDC}"
+        echo -e "${GREEN}后台测速正在运行 PID:${pid}${ENDC}"
         ps -p "$pid" -o pid,etime,cmd 2>/dev/null; echo
         [ -f "$LAST_LOG_FILE" ] && echo "当前日志: $(cat "$LAST_LOG_FILE" 2>/dev/null)"
-        [ -f "$LAST_CSV_FILE" ] && echo "当前CSV: $(cat "$LAST_CSV_FILE" 2>/dev/null)"
+        [ -f "$LAST_CSV_FILE" ] && echo "当前CSV:  $(cat "$LAST_CSV_FILE" 2>/dev/null)"
         echo "后台输出: $DAEMON_STDOUT"; echo
         [ -f "$DAEMON_STDOUT" ] && tail -n 20 "$DAEMON_STDOUT"
     else
         echo -e "${YELLOW}当前没有后台测速任务${ENDC}"
-        [ -f "$DAEMON_STDOUT" ] && { echo; echo "最近后台输出:"; tail -n 20 "$DAEMON_STDOUT"; }
+        [ -f "$DAEMON_STDOUT" ] && { echo; tail -n 20 "$DAEMON_STDOUT"; }
     fi
 }
 
 stop_background_task() {
-    if ! is_running; then
-        echo -e "${YELLOW}当前没有后台测速任务${ENDC}"; rm -f "$PID_FILE"; return
-    fi
+    if ! is_running; then echo -e "${YELLOW}当前没有后台测速任务${ENDC}"; rm -f "$PID_FILE"; return; fi
     local pid; pid=$(cat "$PID_FILE")
-    kill "$pid" 2>/dev/null || true; sleep 1
+    kill "$pid" 2>/dev/null; sleep 1
     kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
-    rm -f "$PID_FILE"
-    echo -e "${GREEN}后台测速任务已停止${ENDC}"
+    rm -f "$PID_FILE"; echo -e "${GREEN}后台测速任务已停止${ENDC}"
 }
 
 list_logs() {
     mapfile -t LOG_FILES < <(find "$LOG_DIR" -maxdepth 1 -type f -name '*.log' | sort -r)
-    if [ ${#LOG_FILES[@]} -eq 0 ]; then echo -e "${YELLOW}暂无日志${ENDC}"; return 1; fi
+    [ ${#LOG_FILES[@]} -eq 0 ] && { echo -e "${YELLOW}暂无日志${ENDC}"; return 1; }
     echo; local i
     for i in "${!LOG_FILES[@]}"; do printf '  %02d. %s\n' "$((i+1))" "$(basename "${LOG_FILES[$i]}")"; done
     echo; return 0
@@ -719,15 +478,16 @@ list_logs() {
 
 list_csvs() {
     mapfile -t CSV_FILES < <(find "$LOG_DIR" -maxdepth 1 -type f -name '*.csv' | sort -r)
-    if [ ${#CSV_FILES[@]} -eq 0 ]; then echo -e "${YELLOW}暂无CSV${ENDC}"; return 1; fi
+    [ ${#CSV_FILES[@]} -eq 0 ] && { echo -e "${YELLOW}暂无CSV${ENDC}"; return 1; }
     echo; local i
     for i in "${!CSV_FILES[@]}"; do printf '  %02d. %s\n' "$((i+1))" "$(basename "${CSV_FILES[$i]}")"; done
     echo; return 0
 }
 
 list_reports() {
-    mapfile -t REPORT_FILES < <(find "$REPORT_DIR" -maxdepth 1 -type f \( -name '*.html' -o -name '*.txt' -o -name '*.svg' -o -name '*.tar.gz' -o -name '*.csv' \) | sort -r)
-    if [ ${#REPORT_FILES[@]} -eq 0 ]; then echo -e "${YELLOW}暂无报告${ENDC}"; return 1; fi
+    mapfile -t REPORT_FILES < <(find "$REPORT_DIR" -maxdepth 1 -type f \
+        \( -name '*.html' -o -name '*.txt' -o -name '*.svg' -o -name '*.tar.gz' -o -name '*.csv' \) | sort -r)
+    [ ${#REPORT_FILES[@]} -eq 0 ] && { echo -e "${YELLOW}暂无报告${ENDC}"; return 1; }
     echo; local i
     for i in "${!REPORT_FILES[@]}"; do printf '  %02d. %s\n' "$((i+1))" "$(basename "${REPORT_FILES[$i]}")"; done
     echo; return 0
@@ -736,16 +496,15 @@ list_reports() {
 view_latest_log() {
     mapfile -t LOG_FILES < <(find "$LOG_DIR" -maxdepth 1 -type f -name '*.log' | sort -r)
     [ ${#LOG_FILES[@]} -eq 0 ] && { echo -e "${YELLOW}暂无日志${ENDC}"; return; }
-    sed -n '1,260p' "${LOG_FILES[0]}"
+    sed -n '1,300p' "${LOG_FILES[0]}"
 }
 
 view_log_by_menu() {
     list_logs || return
-    local choice; read -r -p "选择要查看的日志编号: " choice
-    if [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#LOG_FILES[@]} )); then
-        echo -e "${RED}编号无效${ENDC}"; return
-    fi
-    sed -n '1,260p' "${LOG_FILES[$((choice-1))]}"
+    local choice; read -r -p "选择日志编号: " choice
+    [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice<1 || choice>${#LOG_FILES[@]} )) && \
+        { echo -e "${RED}编号无效${ENDC}"; return; }
+    sed -n '1,300p' "${LOG_FILES[$((choice-1))]}"
 }
 
 build_round_curve_data() {
@@ -753,11 +512,11 @@ build_round_curve_data() {
     awk -F',' '
     function trim(s){gsub(/^[ \t\r\n]+|[ \t\r\n]+$/,"",s);return s}
     NR==1{next}
-    {round=trim($2);time=trim($1);up=trim($7)+0;up_s=trim($8);down=trim($9)+0;down_s=trim($10);lat=trim($11)+0;jit=trim($12)+0;
-     if(!(round in rt))rt[round]=substr(time,12,8);
-     if(up_s=="正常"&&down_s=="正常"){cnt[round]++;us[round]+=up;ds[round]+=down;ls[round]+=lat;js[round]+=jit;}}
+    {r=trim($2);t=trim($1);up=trim($7)+0;us=trim($8);dn=trim($9)+0;ds=trim($10);la=trim($11)+0;ji=trim($12)+0;
+     if(!(r in rt))rt[r]=substr(t,12,8);
+     if(us=="正常"&&ds=="正常"){cnt[r]++;us2[r]+=up;ds2[r]+=dn;ls[r]+=la;js[r]+=ji;}}
     END{print "round,time,avg_upload,avg_download,avg_latency,avg_jitter,count";
-        for(r in cnt)printf "%d,%s,%.4f,%.4f,%.4f,%.4f,%d\n",r,rt[r],us[r]/cnt[r],ds[r]/cnt[r],ls[r]/cnt[r],js[r]/cnt[r],cnt[r];}
+        for(r in cnt)printf "%d,%s,%.4f,%.4f,%.4f,%.4f,%d\n",r,rt[r],us2[r]/cnt[r],ds2[r]/cnt[r],ls[r]/cnt[r],js[r]/cnt[r],cnt[r];}
     ' "$csv_file" | sort -t',' -k1,1n > "$out_file"
 }
 
@@ -765,54 +524,52 @@ generate_summary_report() {
     local csv_file="$1" out_file="$2"
     awk -F',' '
     function trim(s){gsub(/^[ \t\r\n]+|[ \t\r\n]+$/,"",s);return s}
-    BEGIN{total=0;success=0;up_ok=0;down_ok=0;fail=0;}
+    BEGIN{total=0;success=0;fail=0;}
     NR==1{next}
-    {time=trim($1);round=trim($2);group=trim($3);node=trim($6);
-     up=trim($7)+0;us=trim($8);down=trim($9)+0;ds=trim($10);lat=trim($11)+0;jit=trim($12)+0;
-     total++;round_seen[round]=1;if(st=="")st=time;et=time;
-     gt[group]++;nk=group"|"node;
-     if(us=="正常")up_ok++;if(ds=="正常")down_ok++;
+    {t=trim($1);r=trim($2);g=trim($3);nd=trim($6);
+     up=trim($7)+0;us=trim($8);dn=trim($9)+0;ds=trim($10);la=trim($11)+0;
+     total++;rs[r]=1;if(st=="")st=t;et=t;gt[g]++;
      if(us=="失败"||ds=="失败")fail++;
-     if(us=="正常"&&ds=="正常"){success++;go[group]++;
-       up_sum+=up;dn_sum+=down;lt_sum+=lat;
-       up_sq+=up*up;dn_sq+=down*down;lt_sq+=lat*lat;
-       if(bd==""||down>bdv){bd=nk;bdv=down;}if(bu==""||up>buv){bu=nk;buv=up;}if(bl==""||lat<blv){bl=nk;blv=lat;}
-       gups[group]+=up;gdns[group]+=down;glts[group]+=lat;gdo[group]++;}}
-    END{rounds=0;for(r in round_seen)rounds++;
-        print "———————————————— 分析报告 ————————————————";
-        print "区间: "st" -> "et;print "样本: "total"  轮次: "rounds;
-        printf "双向可用率: %.2f%% (%d/%d)\n",total>0?success/total*100:0,success,total;
-        printf "上传/下载/失败: %.2f%%/%.2f%%/%.2f%%\n",total>0?up_ok/total*100:0,total>0?down_ok/total*100:0,total>0?fail/total*100:0;
-        if(success>0){
-          ua=up_sum/success;da=dn_sum/success;la=lt_sum/success;
-          us2=sqrt((up_sq/success)-(ua*ua));if(us2<0)us2=0;
-          ds2=sqrt((dn_sq/success)-(da*da));if(ds2<0)ds2=0;
-          ls2=sqrt((lt_sq/success)-(la*la));if(ls2<0)ls2=0;
-          print "";print "可用样本统计:";
-          printf "- 平均上传: %.2f Mbps  波动:%.2f\n",ua,us2;
-          printf "- 平均下载: %.2f Mbps  波动:%.2f\n",da,ds2;
-          printf "- 平均延迟: %.2f ms    波动:%.2f\n",la,ls2;
-          printf "- 峰值上传: %.2f (%s)\n",buv,bu;
-          printf "- 峰值下载: %.2f (%s)\n",bdv,bd;
-          printf "- 最低延迟: %.2f (%s)\n",blv,bl;
-          if(da>=80&&la<=160)print "- 综合: 质量较好";
-          else if(da>=40&&la<=200)print "- 综合: 线路可用";
-          else print "- 综合: 线路存在短板";}
-        print "";print "分组:";
-        for(g in gt){r2=(go[g]+0)/gt[g]*100;printf "- %s: %.2f%% (%d/%d)",g,r2,go[g]+0,gt[g];
-          if((gdo[g]+0)>0)printf "  ↑%.2f ↓%.2f ↕%.2f",gups[g]/gdo[g],gdns[g]/gdo[g],glts[g]/gdo[g];printf "\n";}
-        print "——————————————————————————————————";
+     if(us=="正常"&&ds=="正常"){success++;go[g]++;
+       usum+=up;dsum+=dn;lsum+=la;
+       usq+=up*up;dsq+=dn*dn;lsq+=la*la;
+       if(bd==""||dn>bdv){bd=g"|"nd;bdv=dn;}
+       if(bu==""||up>buv){bu=g"|"nd;buv=up;}
+       if(bl==""||la<blv){bl=g"|"nd;blv=la;}
+       gus[g]+=up;gds[g]+=dn;gls[g]+=la;gdo[g]++;}}
+    END{rn=0;for(r in rs)rn++;
+        print "═══════════════ HyperSpeed Plus 分析报告 ═══════════════";
+        print "区间: "st" → "et; printf "样本: %d  轮次: %d\n",total,rn;
+        printf "双向可用率: %.2f%% (%d/%d)  失败: %d\n",total>0?success/total*100:0,success,total,fail;
+        if(success>0){ua=usum/success;da=dsum/success;la2=lsum/success;
+          us2=sqrt((usq/success)-(ua^2));if(us2<0)us2=0;
+          ds2=sqrt((dsq/success)-(da^2));if(ds2<0)ds2=0;
+          ls2=sqrt((lsq/success)-(la2^2));if(ls2<0)ls2=0;
+          print "";print "━━━━━ 可用样本统计 ━━━━━";
+          printf "  平均上传: %7.2f Mbps  (波动 ±%.2f)\n",ua,us2;
+          printf "  平均下载: %7.2f Mbps  (波动 ±%.2f)\n",da,ds2;
+          printf "  平均延迟: %7.2f ms    (波动 ±%.2f)\n",la2,ls2;
+          printf "  峰值上传: %.2f  ← %s\n",buv,bu;
+          printf "  峰值下载: %.2f  ← %s\n",bdv,bd;
+          printf "  最低延迟: %.2f  ← %s\n",blv,bl;
+          if(da>=80&&la2<=160)print "  综合评估: ★★★ 质量较好";
+          else if(da>=40&&la2<=200)print "  综合评估: ★★  线路可用";
+          else print "  综合评估: ★   线路存在短板";}
+        print ""; print "━━━━━ 分组统计 ━━━━━";
+        for(g in gt){r2=(go[g]+0)/gt[g]*100;printf "  %-10s %.2f%% (%d/%d)",g,r2,go[g]+0,gt[g];
+          if((gdo[g]+0)>0)printf "  ↑%.2f ↓%.2f ↕%.2f",gus[g]/gdo[g],gds[g]/gdo[g],gls[g]/gdo[g];printf "\n";}
+        print "═══════════════════════════════════════════════════════";
     }' "$csv_file" > "$out_file"
 }
 
 generate_speed_svg() {
     local data_file="$1" out_svg="$2"
     awk -F',' 'BEGIN{w=1280;h=480;L=80;R=40;T=40;B=70;pW=w-L-R;pH=h-T-B;n=0;maxV=0;}
-    NR==1{next}{n++;label[n]=$2;up[n]=$3+0;down[n]=$4+0;if(up[n]>maxV)maxV=up[n];if(down[n]>maxV)maxV=down[n];}
+    NR==1{next}{n++;lb[n]=$2;up[n]=$3+0;dn[n]=$4+0;if(up[n]>maxV)maxV=up[n];if(dn[n]>maxV)maxV=dn[n];}
     END{if(maxV<=0)maxV=1;
       print "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\""w"\" height=\""h"\">";
       print "<rect width=\"100%\" height=\"100%\" fill=\"#0b1220\"/>";
-      print "<text x=\"40\" y=\"28\" fill=\"#e5e7eb\" font-size=\"20\" font-family=\"Arial\">速度曲线</text>";
+      print "<text x=\"40\" y=\"28\" fill=\"#e5e7eb\" font-size=\"20\" font-family=\"Arial\">速度曲线 (Mbps)</text>";
       print "<line x1=\""L"\" y1=\""T"\" x2=\""L"\" y2=\""T+pH"\" stroke=\"#94a3b8\" stroke-width=\"1\"/>";
       print "<line x1=\""L"\" y1=\""T+pH"\" x2=\""L+pW"\" y2=\""T+pH"\" stroke=\"#94a3b8\" stroke-width=\"1\"/>";
       for(i=0;i<=4;i++){y=T+pH-(pH*i/4);v=maxV*i/4;
@@ -820,26 +577,26 @@ generate_speed_svg() {
         printf "<text x=\"4\" y=\"%.0f\" fill=\"#94a3b8\" font-size=\"11\">%.0f</text>\n",y+4,v;}
       if(n==0){print "<text x=\"100\" y=\"240\" fill=\"#fbbf24\" font-size=\"18\">暂无数据</text></svg>";exit;}
       step=(n==1)?0:pW/(n-1);uP="";dP="";
-      for(i=1;i<=n;i++){x=L+(i-1)*step;yu=T+pH-(up[i]/maxV*pH);yd=T+pH-(down[i]/maxV*pH);
+      for(i=1;i<=n;i++){x=L+(i-1)*step;yu=T+pH-(up[i]/maxV*pH);yd=T+pH-(dn[i]/maxV*pH);
         uP=uP sprintf("%.1f,%.1f ",x,yu);dP=dP sprintf("%.1f,%.1f ",x,yd);
         print "<circle cx=\""x"\" cy=\""yu"\" r=\"3\" fill=\"#38bdf8\"/>";
         print "<circle cx=\""x"\" cy=\""yd"\" r=\"3\" fill=\"#22c55e\"/>";
-        printf "<text x=\"%.1f\" y=\"%d\" fill=\"#94a3b8\" font-size=\"10\" text-anchor=\"middle\">%s</text>\n",x,T+pH+18,label[i];}
+        printf "<text x=\"%.1f\" y=\"%d\" fill=\"#94a3b8\" font-size=\"10\" text-anchor=\"middle\">R%s</text>\n",x,T+pH+18,lb[i];}
       print "<polyline fill=\"none\" stroke=\"#38bdf8\" stroke-width=\"2.5\" points=\""uP"\"/>";
       print "<polyline fill=\"none\" stroke=\"#22c55e\" stroke-width=\"2.5\" points=\""dP"\"/>";
-      print "<rect x=\"1080\" y=\"14\" width=\"12\" height=\"12\" fill=\"#38bdf8\"/><text x=\"1098\" y=\"25\" fill=\"#e5e7eb\" font-size=\"13\">上传</text>";
-      print "<rect x=\"1140\" y=\"14\" width=\"12\" height=\"12\" fill=\"#22c55e\"/><text x=\"1158\" y=\"25\" fill=\"#e5e7eb\" font-size=\"13\">下载</text>";
+      print "<rect x=\"1060\" y=\"14\" width=\"12\" height=\"12\" fill=\"#38bdf8\"/><text x=\"1078\" y=\"25\" fill=\"#e5e7eb\" font-size=\"13\">上传</text>";
+      print "<rect x=\"1130\" y=\"14\" width=\"12\" height=\"12\" fill=\"#22c55e\"/><text x=\"1148\" y=\"25\" fill=\"#e5e7eb\" font-size=\"13\">下载</text>";
       print "</svg>";}' "$data_file" > "$out_svg"
 }
 
 generate_latency_svg() {
     local data_file="$1" out_svg="$2"
     awk -F',' 'BEGIN{w=1280;h=480;L=80;R=40;T=40;B=70;pW=w-L-R;pH=h-T-B;n=0;maxV=0;}
-    NR==1{next}{n++;label[n]=$2;lat[n]=$5+0;jit[n]=$6+0;if(lat[n]>maxV)maxV=lat[n];if(jit[n]>maxV)maxV=jit[n];}
+    NR==1{next}{n++;lb[n]=$2;la[n]=$5+0;ji[n]=$6+0;if(la[n]>maxV)maxV=la[n];if(ji[n]>maxV)maxV=ji[n];}
     END{if(maxV<=0)maxV=1;
       print "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\""w"\" height=\""h"\">";
       print "<rect width=\"100%\" height=\"100%\" fill=\"#0f172a\"/>";
-      print "<text x=\"40\" y=\"28\" fill=\"#e5e7eb\" font-size=\"20\" font-family=\"Arial\">延迟曲线</text>";
+      print "<text x=\"40\" y=\"28\" fill=\"#e5e7eb\" font-size=\"20\" font-family=\"Arial\">延迟曲线 (ms)</text>";
       print "<line x1=\""L"\" y1=\""T"\" x2=\""L"\" y2=\""T+pH"\" stroke=\"#94a3b8\" stroke-width=\"1\"/>";
       print "<line x1=\""L"\" y1=\""T+pH"\" x2=\""L+pW"\" y2=\""T+pH"\" stroke=\"#94a3b8\" stroke-width=\"1\"/>";
       for(i=0;i<=4;i++){y=T+pH-(pH*i/4);v=maxV*i/4;
@@ -847,15 +604,15 @@ generate_latency_svg() {
         printf "<text x=\"4\" y=\"%.0f\" fill=\"#94a3b8\" font-size=\"11\">%.0f</text>\n",y+4,v;}
       if(n==0){print "<text x=\"100\" y=\"240\" fill=\"#fbbf24\" font-size=\"18\">暂无数据</text></svg>";exit;}
       step=(n==1)?0:pW/(n-1);lP="";jP="";
-      for(i=1;i<=n;i++){x=L+(i-1)*step;yl=T+pH-(lat[i]/maxV*pH);yj=T+pH-(jit[i]/maxV*pH);
+      for(i=1;i<=n;i++){x=L+(i-1)*step;yl=T+pH-(la[i]/maxV*pH);yj=T+pH-(ji[i]/maxV*pH);
         lP=lP sprintf("%.1f,%.1f ",x,yl);jP=jP sprintf("%.1f,%.1f ",x,yj);
         print "<circle cx=\""x"\" cy=\""yl"\" r=\"3\" fill=\"#f59e0b\"/>";
         print "<circle cx=\""x"\" cy=\""yj"\" r=\"3\" fill=\"#a855f7\"/>";
-        printf "<text x=\"%.1f\" y=\"%d\" fill=\"#94a3b8\" font-size=\"10\" text-anchor=\"middle\">%s</text>\n",x,T+pH+18,label[i];}
+        printf "<text x=\"%.1f\" y=\"%d\" fill=\"#94a3b8\" font-size=\"10\" text-anchor=\"middle\">R%s</text>\n",x,T+pH+18,lb[i];}
       print "<polyline fill=\"none\" stroke=\"#f59e0b\" stroke-width=\"2.5\" points=\""lP"\"/>";
       print "<polyline fill=\"none\" stroke=\"#a855f7\" stroke-width=\"2.5\" points=\""jP"\"/>";
-      print "<rect x=\"1080\" y=\"14\" width=\"12\" height=\"12\" fill=\"#f59e0b\"/><text x=\"1098\" y=\"25\" fill=\"#e5e7eb\" font-size=\"13\">延迟</text>";
-      print "<rect x=\"1140\" y=\"14\" width=\"12\" height=\"12\" fill=\"#a855f7\"/><text x=\"1158\" y=\"25\" fill=\"#e5e7eb\" font-size=\"13\">抖动</text>";
+      print "<rect x=\"1060\" y=\"14\" width=\"12\" height=\"12\" fill=\"#f59e0b\"/><text x=\"1078\" y=\"25\" fill=\"#e5e7eb\" font-size=\"13\">延迟</text>";
+      print "<rect x=\"1130\" y=\"14\" width=\"12\" height=\"12\" fill=\"#a855f7\"/><text x=\"1148\" y=\"25\" fill=\"#e5e7eb\" font-size=\"13\">抖动</text>";
       print "</svg>";}' "$data_file" > "$out_svg"
 }
 
@@ -868,8 +625,9 @@ generate_html_report() {
 <html lang="zh-CN"><head><meta charset="UTF-8"><title>HyperSpeed Plus 报告</title>
 <style>body{background:#020617;color:#e5e7eb;font-family:Arial,sans-serif;margin:0;padding:24px}.wrap{max-width:1320px;margin:0 auto}.card{background:#111827;border:1px solid #1f2937;border-radius:16px;padding:20px;margin-bottom:20px}pre{white-space:pre-wrap;line-height:1.7;font-size:14px}img{width:100%;border-radius:12px;border:1px solid #1f2937}a{color:#7dd3fc}h1,h2{margin-top:0}</style></head>
 <body><div class="wrap">
-<div class="card"><h1>HyperSpeed Plus 分析报告</h1><p><a href="${sn}">${sn}</a> | <a href="${sp}">${sp}</a> | <a href="${ln}">${ln}</a></p></div>
-<div class="card"><h2>分析摘要</h2><pre>$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "$summary_file")</pre></div>
+<div class="card"><h1>HyperSpeed Plus 分析报告</h1><p>
+<a href="${sn}">${sn}</a> | <a href="${sp}">${sp}</a> | <a href="${ln}">${ln}</a></p></div>
+<div class="card"><h2>分析摘要</h2><pre>$(sed 's/&/\&amp;/g;s/</\&lt;/g;s/>/\&gt;/g' "$summary_file")</pre></div>
 <div class="card"><h2>速度曲线</h2><img src="${sp}" alt="速度曲线"></div>
 <div class="card"><h2>延迟曲线</h2><img src="${ln}" alt="延迟曲线"></div>
 </div></body></html>
@@ -879,21 +637,21 @@ HTMLEOF
 analyze_csv_file() {
     local csv_file="$1"
     [ -f "$csv_file" ] || { echo -e "${RED}CSV不存在${ENDC}"; return 1; }
-    local base_name; base_name=$(basename "$csv_file" .csv)
-    local round_data="${REPORT_DIR}/${base_name}-rounds.csv"
-    local summary_txt="${REPORT_DIR}/${base_name}-summary.txt"
-    local speed_svg="${REPORT_DIR}/${base_name}-speed.svg"
-    local latency_svg="${REPORT_DIR}/${base_name}-latency.svg"
-    local report_html="${REPORT_DIR}/${base_name}-report.html"
-    build_round_curve_data "$csv_file" "$round_data"
-    generate_summary_report "$csv_file" "$summary_txt"
-    generate_speed_svg "$round_data" "$speed_svg"
-    generate_latency_svg "$round_data" "$latency_svg"
-    generate_html_report "$summary_txt" "$speed_svg" "$latency_svg" "$report_html"
-    sed -n '1,220p' "$summary_txt"; echo
-    echo -e "${GREEN}速度曲线:${ENDC} $speed_svg"
-    echo -e "${GREEN}延迟曲线:${ENDC} $latency_svg"
-    echo -e "${GREEN}HTML报告:${ENDC} $report_html"
+    local bn; bn=$(basename "$csv_file" .csv)
+    local rd="${REPORT_DIR}/${bn}-rounds.csv"
+    local st="${REPORT_DIR}/${bn}-summary.txt"
+    local ss="${REPORT_DIR}/${bn}-speed.svg"
+    local ls="${REPORT_DIR}/${bn}-latency.svg"
+    local rh="${REPORT_DIR}/${bn}-report.html"
+    build_round_curve_data "$csv_file" "$rd"
+    generate_summary_report "$csv_file" "$st"
+    generate_speed_svg "$rd" "$ss"
+    generate_latency_svg "$rd" "$ls"
+    generate_html_report "$st" "$ss" "$ls" "$rh"
+    sed -n '1,220p' "$st"; echo
+    echo -e "${GREEN}速度曲线:${ENDC} $ss"
+    echo -e "${GREEN}延迟曲线:${ENDC} $ls"
+    echo -e "${GREEN}HTML报告:${ENDC} $rh"
 }
 
 analyze_latest_csv() {
@@ -905,19 +663,20 @@ analyze_latest_csv() {
 analyze_csv_by_menu() {
     list_csvs || return
     local choice; read -r -p "选择CSV编号: " choice
-    if [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#CSV_FILES[@]} )); then
-        echo -e "${RED}编号无效${ENDC}"; return
-    fi
+    [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice<1 || choice>${#CSV_FILES[@]} )) && \
+        { echo -e "${RED}编号无效${ENDC}"; return; }
     analyze_csv_file "${CSV_FILES[$((choice-1))]}"
 }
 
 pack_latest_report() {
     mapfile -t HTMLS < <(find "$REPORT_DIR" -maxdepth 1 -type f -name '*-report.html' | sort -r)
-    if [ ${#HTMLS[@]} -eq 0 ]; then echo -e "${YELLOW}暂无报告，请先执行分析${ENDC}"; return 1; fi
+    [ ${#HTMLS[@]} -eq 0 ] && { echo -e "${YELLOW}暂无报告，请先执行分析${ENDC}"; return 1; }
     local html base tarfile
     html="${HTMLS[0]}"; base=$(basename "$html" -report.html)
     tarfile="${REPORT_DIR}/${base}-pack.tar.gz"
-    tar -C "$REPORT_DIR" -czf "$tarfile" "${base}-report.html" "${base}-summary.txt" "${base}-speed.svg" "${base}-latency.svg" "${base}-rounds.csv" 2>/dev/null
+    tar -C "$REPORT_DIR" -czf "$tarfile" \
+        "${base}-report.html" "${base}-summary.txt" \
+        "${base}-speed.svg" "${base}-latency.svg" "${base}-rounds.csv" 2>/dev/null
     echo "$tarfile"
 }
 
