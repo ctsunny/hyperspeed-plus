@@ -10,17 +10,21 @@ BLUE='\033[0;34m'
 ENDC='\033[0m'
 
 SCRIPT_NAME='HyperSpeed Plus'
-SCRIPT_VERSION='4.0.0'
+SCRIPT_VERSION='5.0.0'
 BASE_DIR="${HOME}/.hyperspeed-plus"
 LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
 REPORT_DIR="${BASE_DIR}/reports"
+RUN_DIR="${BASE_DIR}/run"
 BINARY="${WORK_DIR}/bimc"
 THREAD_FLAG=''
 
-mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR"
+PID_FILE="${RUN_DIR}/hyperspeed.pid"
+TASK_FILE="${RUN_DIR}/task.env"
+DAEMON_STDOUT="${RUN_DIR}/daemon.out"
 
-# 已移除两个教育网断流节点，仅保留当前可用节点
+mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR"
+
 NODES=(
 '电信|上海|电信||aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQK|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkCg=='
 '电信|江苏镇江5G|电信||aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvZG93bmxvYWQ=|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvdXBsb2Fk'
@@ -54,7 +58,7 @@ download_file() {
 
 check_dependencies() {
     local missing=()
-    for cmd in base64 awk sed date sort head tail tr find basename dirname; do
+    for cmd in base64 awk sed date sort head tail tr find basename dirname tar ps kill; do
         command_exists "$cmd" || missing+=("$cmd")
     done
     if ! command_exists curl && ! command_exists wget; then
@@ -82,7 +86,7 @@ prepare_bimc() {
 print_banner() {
     clear
     echo "—————————————————————— ${SCRIPT_NAME} ${SCRIPT_VERSION} ——————————————————————"
-    echo "  长时压力测速 | 随机间隔 | 节点多选 | 专业分析 | 曲线报告"
+    echo "  长时压力测速 | 后台守护 | 随机间隔 | 曲线分析 | 报告上传"
     echo "  日志目录: ${LOG_DIR}"
     echo "  报告目录: ${REPORT_DIR}"
     echo "——————————————————————————————————————————————————————————————————————————————"
@@ -174,6 +178,7 @@ get_duration_option() {
         fi
         echo -e "${RED}请输入数字，例如 0 / 1 / 2.5${ENDC}"
     done
+
     if awk "BEGIN{exit !($DURATION_HOURS>0)}"; then
         while true; do
             read -r -p "每轮随机间隔上限(分钟，默认10，表示 1~N分钟内随机秒数): " INTERVAL_MINUTES
@@ -186,6 +191,7 @@ get_duration_option() {
     else
         INTERVAL_MINUTES=0
     fi
+
     DURATION_SECONDS=$(awk "BEGIN{printf \"%d\", $DURATION_HOURS*3600}")
     INTERVAL_SECONDS=$(awk "BEGIN{printf \"%d\", $INTERVAL_MINUTES*60}")
 }
@@ -201,6 +207,42 @@ new_log_files() {
 log_line() {
     printf '%b\n' "$1"
     printf '%b\n' "$2" >> "$LOG_FILE"
+}
+
+save_task_env() {
+    : > "$TASK_FILE"
+    echo "THREAD_FLAG='$THREAD_FLAG'" >> "$TASK_FILE"
+    echo "DURATION_SECONDS='$DURATION_SECONDS'" >> "$TASK_FILE"
+    echo "INTERVAL_SECONDS='$INTERVAL_SECONDS'" >> "$TASK_FILE"
+    echo "DURATION_HOURS='$DURATION_HOURS'" >> "$TASK_FILE"
+    echo "INTERVAL_MINUTES='$INTERVAL_MINUTES'" >> "$TASK_FILE"
+    echo -n "SELECTED_IDS=(" >> "$TASK_FILE"
+    local id
+    for id in "${SELECTED_IDS[@]}"; do
+        echo -n "\"$id\" " >> "$TASK_FILE"
+    done
+    echo ")" >> "$TASK_FILE"
+}
+
+load_task_env() {
+    if [ ! -f "$TASK_FILE" ]; then
+        echo -e "${RED}任务配置不存在${ENDC}"
+        return 1
+    fi
+    # shellcheck disable=SC1090
+    source "$TASK_FILE"
+    return 0
+}
+
+is_running() {
+    if [ -f "$PID_FILE" ]; then
+        local pid
+        pid=$(cat "$PID_FILE" 2>/dev/null)
+        if [[ "$pid" =~ ^[0-9]+$ ]] && ps -p "$pid" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    return 1
 }
 
 run_single_test() {
@@ -301,6 +343,66 @@ run_test_plan() {
     done
 
     log_line "${GREEN}测试完成${ENDC}" "测试完成"
+    rm -f "$PID_FILE"
+}
+
+start_background_task() {
+    if is_running; then
+        echo -e "${YELLOW}已有后台测速任务在运行，PID: $(cat "$PID_FILE")${ENDC}"
+        return
+    fi
+
+    prepare_bimc
+    select_nodes
+    get_thread_option
+    get_duration_option
+    save_task_env
+
+    nohup bash "$0" --daemon-run > "$DAEMON_STDOUT" 2>&1 &
+    echo $! > "$PID_FILE"
+
+    echo -e "${GREEN}后台任务已启动${ENDC}"
+    echo "PID: $(cat "$PID_FILE")"
+    echo "后台输出: $DAEMON_STDOUT"
+    echo "提示: 现在断开 SSH 也不会中断测速"
+}
+
+daemon_run() {
+    load_task_env || exit 1
+    prepare_bimc
+    run_test_plan
+}
+
+show_status() {
+    if is_running; then
+        local pid
+        pid=$(cat "$PID_FILE")
+        echo -e "${GREEN}后台测速正在运行${ENDC}"
+        echo "PID: $pid"
+        echo "任务配置: $TASK_FILE"
+        echo "后台输出: $DAEMON_STDOUT"
+        echo
+        [ -f "$DAEMON_STDOUT" ] && tail -n 20 "$DAEMON_STDOUT"
+    else
+        echo -e "${YELLOW}当前没有后台测速任务${ENDC}"
+    fi
+}
+
+stop_background_task() {
+    if ! is_running; then
+        echo -e "${YELLOW}当前没有后台测速任务${ENDC}"
+        rm -f "$PID_FILE"
+        return
+    fi
+    local pid
+    pid=$(cat "$PID_FILE")
+    kill "$pid" 2>/dev/null || true
+    sleep 1
+    if ps -p "$pid" >/dev/null 2>&1; then
+        kill -9 "$pid" 2>/dev/null || true
+    fi
+    rm -f "$PID_FILE"
+    echo -e "${GREEN}后台测速任务已停止${ENDC}"
 }
 
 list_logs() {
@@ -334,7 +436,7 @@ list_csvs() {
 }
 
 list_reports() {
-    mapfile -t REPORT_FILES < <(find "$REPORT_DIR" -maxdepth 1 -type f \( -name '*.html' -o -name '*.txt' -o -name '*.svg' \) | sort -r)
+    mapfile -t REPORT_FILES < <(find "$REPORT_DIR" -maxdepth 1 -type f \( -name '*.html' -o -name '*.txt' -o -name '*.svg' -o -name '*.tar.gz' \) | sort -r)
     if [ ${#REPORT_FILES[@]} -eq 0 ]; then
         echo -e "${YELLOW}暂无报告${ENDC}"
         return 1
@@ -398,7 +500,6 @@ generate_summary_report() {
     local out_file="$2"
     awk -F',' '
     function trim(s) { gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", s); return s }
-    function abs(v) { return v<0?-v:v }
     BEGIN {
         total=0; success=0; up_ok=0; down_ok=0; fail=0; cancel=0; broken=0; both_zero=0;
     }
@@ -465,6 +566,7 @@ generate_summary_report() {
             down_sd = sqrt((down_sq/success) - (down_avg*down_avg)); if (down_sd<0) down_sd=0;
             lat_sd = sqrt((lat_sq/success) - (lat_avg*lat_avg)); if (lat_sd<0) lat_sd=0;
             jit_sd = sqrt((jit_sq/success) - (jit_avg*jit_avg)); if (jit_sd<0) jit_sd=0;
+
             print "";
             print "可用样本统计(仅双向正常):";
             printf "- 平均上传: %.2f Mbps，波动: %.2f Mbps\n", up_avg, up_sd;
@@ -475,6 +577,7 @@ generate_summary_report() {
             printf "- 峰值下载: %.2f Mbps (%s)\n", best_down_val, best_down;
             printf "- 最低延迟: %.2f ms (%s)\n", best_lat_val, best_lat;
             printf "- 最低抖动: %.2f ms (%s)\n", best_jit_val, best_jit;
+
             print "";
             print "线路判断:";
             if (down_avg >= 80 && lat_avg <= 160 && jit_avg <= 8) {
@@ -485,17 +588,17 @@ generate_summary_report() {
                 print "- 综合评价: 线路存在明显短板，建议延长压测并观察曲线尾部波动。";
             }
             if (down_sd > (down_avg * 0.25)) {
-                print "- 下载波动偏大，说明带宽稳定性一般，可能受共享链路或回程策略影响。";
+                print "- 下载波动偏大，说明带宽稳定性一般。";
             }
             if (lat_sd > 20) {
-                print "- 延迟波动明显，实时交互类业务体验可能在高峰期下降。";
+                print "- 延迟波动明显，实时交互业务可能受影响。";
             }
             if (jit_avg > 10) {
-                print "- 平均抖动偏高，建议结合更长时段观察队列拥塞情况。";
+                print "- 平均抖动偏高，建议结合更长时段观察拥塞情况。";
             }
         } else {
             print "";
-            print "可用样本统计: 暂无双向正常样本，无法进行有效吞吐和时延评估。";
+            print "可用样本统计: 暂无双向正常样本。";
         }
 
         print "";
@@ -567,13 +670,10 @@ generate_speed_svg() {
             downPts=downPts sprintf("%.2f,%.2f ", x, yd);
             print "<circle cx=\"" x "\" cy=\"" yu "\" r=\"4\" fill=\"#38bdf8\"/>";
             print "<circle cx=\"" x "\" cy=\"" yd "\" r=\"4\" fill=\"#22c55e\"/>";
-            txt=label[i];
-            printf "<text x=\"%.2f\" y=\"%d\" fill=\"#cbd5e1\" font-size=\"11\" font-family=\"Arial\" text-anchor=\"middle\">%s</text>\n", x, top+plotH+22, txt;
+            printf "<text x=\"%.2f\" y=\"%d\" fill=\"#cbd5e1\" font-size=\"11\" font-family=\"Arial\" text-anchor=\"middle\">%s</text>\n", x, top+plotH+22, label[i];
         }
         print "<polyline fill=\"none\" stroke=\"#38bdf8\" stroke-width=\"3\" points=\"" upPts "\"/>";
         print "<polyline fill=\"none\" stroke=\"#22c55e\" stroke-width=\"3\" points=\"" downPts "\"/>";
-        print "<rect x=\"980\" y=\"18\" width=\"14\" height=\"14\" fill=\"#38bdf8\"/><text x=\"1002\" y=\"30\" fill=\"#e5e7eb\" font-size=\"13\" font-family=\"Arial\">上传</text>";
-        print "<rect x=\"1060\" y=\"18\" width=\"14\" height=\"14\" fill=\"#22c55e\"/><text x=\"1082\" y=\"30\" fill=\"#e5e7eb\" font-size=\"13\" font-family=\"Arial\">下载</text>";
         print "</svg>";
     }' "$data_file" > "$out_svg"
 }
@@ -622,13 +722,10 @@ generate_latency_svg() {
             jitPts=jitPts sprintf("%.2f,%.2f ", x, yj);
             print "<circle cx=\"" x "\" cy=\"" yl "\" r=\"4\" fill=\"#f59e0b\"/>";
             print "<circle cx=\"" x "\" cy=\"" yj "\" r=\"4\" fill=\"#a855f7\"/>";
-            txt=label[i];
-            printf "<text x=\"%.2f\" y=\"%d\" fill=\"#cbd5e1\" font-size=\"11\" font-family=\"Arial\" text-anchor=\"middle\">%s</text>\n", x, top+plotH+22, txt;
+            printf "<text x=\"%.2f\" y=\"%d\" fill=\"#cbd5e1\" font-size=\"11\" font-family=\"Arial\" text-anchor=\"middle\">%s</text>\n", x, top+plotH+22, label[i];
         }
         print "<polyline fill=\"none\" stroke=\"#f59e0b\" stroke-width=\"3\" points=\"" latPts "\"/>";
         print "<polyline fill=\"none\" stroke=\"#a855f7\" stroke-width=\"3\" points=\"" jitPts "\"/>";
-        print "<rect x=\"960\" y=\"18\" width=\"14\" height=\"14\" fill=\"#f59e0b\"/><text x=\"982\" y=\"30\" fill=\"#e5e7eb\" font-size=\"13\" font-family=\"Arial\">延迟</text>";
-        print "<rect x=\"1040\" y=\"18\" width=\"14\" height=\"14\" fill=\"#a855f7\"/><text x=\"1062\" y=\"30\" fill=\"#e5e7eb\" font-size=\"13\" font-family=\"Arial\">抖动</text>";
         print "</svg>";
     }' "$data_file" > "$out_svg"
 }
@@ -731,32 +828,115 @@ analyze_csv_by_menu() {
     analyze_csv_file "${CSV_FILES[$((choice-1))]}"
 }
 
+pack_latest_report() {
+    mapfile -t HTMLS < <(find "$REPORT_DIR" -maxdepth 1 -type f -name '*-report.html' | sort -r)
+    if [ ${#HTMLS[@]} -eq 0 ]; then
+        echo -e "${YELLOW}暂无报告，请先执行分析${ENDC}"
+        return 1
+    fi
+
+    local html base tarfile
+    html="${HTMLS[0]}"
+    base=$(basename "$html" -report.html)
+    tarfile="${REPORT_DIR}/${base}-report-pack.tar.gz"
+
+    tar -C "$REPORT_DIR" -czf "$tarfile" \
+        "${base}-report.html" \
+        "${base}-summary.txt" \
+        "${base}-speed.svg" \
+        "${base}-latency.svg" \
+        "${base}-rounds.csv" 2>/dev/null
+
+    echo "$tarfile"
+}
+
+upload_catbox() {
+    local file="$1"
+    curl -fsSL -F "reqtype=fileupload" -F "fileToUpload=@${file}" https://catbox.moe/user/api.php
+}
+
+upload_transfer_sh() {
+    local file="$1"
+    local name
+    name=$(basename "$file")
+    curl -fsSL --upload-file "$file" "https://transfer.sh/${name}"
+}
+
+upload_tmpfiles() {
+    local file="$1"
+    curl -fsSL -F "file=@${file}" https://tmpfiles.org/api/v1/upload
+}
+
+upload_latest_report() {
+    local tarfile method result
+    tarfile=$(pack_latest_report) || return
+
+    echo "准备上传: $tarfile"
+    echo "1. Catbox"
+    echo "2. transfer.sh"
+    echo "3. tmpfiles.org"
+    read -r -p "选择上传方式(默认1): " method
+    method="${method:-1}"
+
+    case "$method" in
+        1)
+            result=$(upload_catbox "$tarfile")
+            echo -e "${GREEN}上传完成:${ENDC} $result"
+            ;;
+        2)
+            result=$(upload_transfer_sh "$tarfile")
+            echo -e "${GREEN}上传完成:${ENDC} $result"
+            ;;
+        3)
+            result=$(upload_tmpfiles "$tarfile")
+            echo -e "${GREEN}上传完成:${ENDC} $result"
+            ;;
+        *)
+            echo -e "${RED}无效选项${ENDC}"
+            ;;
+    esac
+}
+
 main_menu() {
     while true; do
         print_banner
-        echo "1. 开始测速"
-        echo "2. 日志列表"
-        echo "3. 查看最新日志"
-        echo "4. 查看指定日志"
-        echo "5. 分析最新CSV并生成曲线"
-        echo "6. 选择CSV做分析并生成曲线"
-        echo "7. 报告文件列表"
+        echo "1. 前台开始测速"
+        echo "2. 后台守护开始测速"
+        echo "3. 查看后台任务状态"
+        echo "4. 停止后台任务"
+        echo "5. 日志列表"
+        echo "6. 查看最新日志"
+        echo "7. 查看指定日志"
+        echo "8. 分析最新CSV并生成曲线"
+        echo "9. 选择CSV做分析并生成曲线"
+        echo "10. 报告文件列表"
+        echo "11. 上传最新报告并生成下载链接"
         echo "0. 退出"
         echo
         read -r -p "请选择: " menu
         case "$menu" in
             1) prepare_bimc; select_nodes; get_thread_option; get_duration_option; run_test_plan; pause_screen ;;
-            2) list_logs; pause_screen ;;
-            3) view_latest_log; pause_screen ;;
-            4) view_log_by_menu; pause_screen ;;
-            5) analyze_latest_csv; pause_screen ;;
-            6) analyze_csv_by_menu; pause_screen ;;
-            7) list_reports; pause_screen ;;
+            2) start_background_task; pause_screen ;;
+            3) show_status; pause_screen ;;
+            4) stop_background_task; pause_screen ;;
+            5) list_logs; pause_screen ;;
+            6) view_latest_log; pause_screen ;;
+            7) view_log_by_menu; pause_screen ;;
+            8) analyze_latest_csv; pause_screen ;;
+            9) analyze_csv_by_menu; pause_screen ;;
+            10) list_reports; pause_screen ;;
+            11) upload_latest_report; pause_screen ;;
             0) exit 0 ;;
             *) echo -e "${RED}无效选项${ENDC}"; sleep 1 ;;
         esac
     done
 }
+
+if [[ "${1:-}" == "--daemon-run" ]]; then
+    check_dependencies
+    daemon_run
+    exit 0
+fi
 
 check_dependencies
 main_menu
