@@ -9,7 +9,7 @@ CYAN='\033[0;36m'
 ENDC='\033[0m'
 
 SCRIPT_NAME='HyperSpeed Plus'
-SCRIPT_VERSION='6.5.0'
+SCRIPT_VERSION='6.6.0'
 BASE_DIR="${HOME}/.hyperspeed-plus"
 LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
@@ -18,6 +18,7 @@ RUN_DIR="${BASE_DIR}/run"
 BIN_DIR="${BASE_DIR}/bin"
 WORKER_SCRIPT="${RUN_DIR}/worker.sh"
 BINARY="${WORK_DIR}/bimc"
+LIBRESPEED_BIN="${BIN_DIR}/librespeed-cli"
 THREAD_FLAG=''
 
 PID_FILE="${RUN_DIR}/hyperspeed.pid"
@@ -26,21 +27,31 @@ DAEMON_STDOUT="${RUN_DIR}/daemon.out"
 LAST_LOG_FILE="${RUN_DIR}/last_log_path"
 LAST_CSV_FILE="${RUN_DIR}/last_csv_path"
 
-ECS_CLI_DIR="/root/speedtest-cli"
-SERVER_BASE_URL="https://raw.githubusercontent.com/spiritLHLS/speedtest.net-CN-ID/main"
-BrowserUA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.74 Safari/537.36"
-Speedtest_Go_version="1.6.12"
+Librespeed_version="0.0.11"
 cdn_success_url=""
 cdn_urls=("https://cdn0.spiritlhl.top/" "http://cdn1.spiritlhl.net/" "http://cdn2.spiritlhl.net/" "http://cdn3.spiritlhl.net/" "http://cdn4.spiritlhl.net/")
 
 mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR" "$BIN_DIR"
 
+# ── 节点定义 ──────────────────────────────────────────────────────────────────
+# 格式: tool|group|location|isp|dl_url|ul_url
+# tool: bimc=bimc二进制测速  libre=librespeed-cli测速  curl=curl裸HTTP测速
+# bimc节点: dl_url=下载base64  ul_url=上传base64
+# libre/curl节点: dl_url=服务器下载地址  ul_url=服务器上传地址
+
 NODES=(
-'bimc|电信|上海|电信||aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQK|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkCg=='
-'bimc|电信|江苏镇江5G|电信||aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvZG93bmxvYWQ=|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvdXBsb2Fk'
-'bimc|电信|江苏南京5G|电信||aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL3VwbG9hZAo='
-'bimc|港澳台日韩|环电宽频|香港||aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL3VwbG9hZAo='
-'bimc|港澳台日韩|中华电信|台北||aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL3VwbG9hZAo='
+# ── bimc 高精度节点 ──
+'bimc|电信|上海|电信|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvZG93bmxvYWQK|aHR0cDovL3NwZWVkdGVzdDEub25saW5lLnNoLmNuOjgwODAvdXBsb2FkCg=='
+'bimc|电信|江苏镇江5G|电信|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvZG93bmxvYWQ=|aHR0cDovLzVnemhlbmppYW5nLnNwZWVkdGVzdC5qc2luZm8ubmV0OjgwODAvdXBsb2Fk'
+'bimc|电信|江苏南京5G|电信|aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovLzVnbmFuamluZy5zcGVlZHRlc3QuanNpbmZvLm5ldDo4MDgwL3VwbG9hZAo='
+'bimc|港澳台日韩|环电宽频|香港|aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL29va2xhLWhpZGMuaGdjb25haXIuaGdjLmNvbS5oazo4MDgwL3VwbG9hZAo='
+'bimc|港澳台日韩|中华电信|台北|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL2Rvd25sb2FkCg==|aHR0cDovL3RwMS5jaHRtLmhpbmV0Lm5ldDo4MDgwL3VwbG9hZAo='
+# ── librespeed 国内三网节点（HTTP直连，不需要外部工具账号）──
+'libre|联通|郑州5G|联通河南|http://5gtest.shangdu.com:8080/garbage.php|http://5gtest.shangdu.com:8080/empty.php'
+'libre|联通|北京|联通北京|http://speedtest.bjtelecom.net:8080/garbage.php|http://speedtest.bjtelecom.net:8080/empty.php'
+'libre|电信|浙江|电信浙江|http://speedtest.zjtel.net.cn:8080/garbage.php|http://speedtest.zjtel.net.cn:8080/empty.php'
+'libre|移动|苏州5G|移动苏州|http://speedtest.js.chinamobile.com:8080/garbage.php|http://speedtest.js.chinamobile.com:8080/empty.php'
+'libre|移动|北京|移动北京|http://speedtest.bj.chinamobile.com:8080/garbage.php|http://speedtest.bj.chinamobile.com:8080/empty.php'
 )
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
@@ -60,7 +71,7 @@ download_file() {
 
 check_dependencies() {
     local missing=()
-    for cmd in base64 awk sed date sort head tail tr find basename dirname tar ps kill chmod cp cat; do
+    for cmd in base64 awk sed date sort head tail tr find basename dirname tar ps kill chmod cp cat bc; do
         command_exists "$cmd" || missing+=("$cmd")
     done
     if ! command_exists curl && ! command_exists wget; then missing+=(curl/wget); fi
@@ -74,6 +85,34 @@ prepare_bimc() {
         download_file "https://bench.im/bimc-${arch}" "$BINARY" || { echo -e "${RED}bimc 下载失败${ENDC}"; exit 1; }
         chmod +x "$BINARY"
     fi
+}
+
+prepare_librespeed() {
+    [ -x "$LIBRESPEED_BIN" ] && return 0
+    local arch; arch=$(uname -m)
+    local go_arch
+    case "$arch" in
+        x86_64|amd64)      go_arch="amd64" ;;
+        aarch64|arm64)     go_arch="arm64" ;;
+        armv7l|armv7)      go_arch="armv7" ;;
+        i386|i686)         go_arch="386"   ;;
+        *)                 go_arch="amd64" ;;
+    esac
+    echo -e "${CYAN}正在安装 librespeed-cli (${go_arch})...${ENDC}"
+    local base_url="https://github.com/librespeed/speedtest-cli/releases/download/v${Librespeed_version}"
+    local fname="librespeed-cli_${Librespeed_version}_linux_${go_arch}.tar.gz"
+    local tmp_tgz="${BIN_DIR}/librespeed.tar.gz"
+    download_file "${base_url}/${fname}" "$tmp_tgz" 2>/dev/null
+    if [ -f "$tmp_tgz" ] && tar -tzf "$tmp_tgz" >/dev/null 2>&1; then
+        tar -xzf "$tmp_tgz" -C "$BIN_DIR" librespeed-cli 2>/dev/null || \
+            tar -xzf "$tmp_tgz" -C "$BIN_DIR" 2>/dev/null
+        rm -f "$tmp_tgz"
+        [ -f "$LIBRESPEED_BIN" ] && chmod +x "$LIBRESPEED_BIN" && \
+            echo -e "${GREEN}librespeed-cli 安装完成${ENDC}" && return 0
+    fi
+    echo -e "${YELLOW}librespeed-cli 安装失败，将使用 curl 裸速测试作为备用${ENDC}"
+    rm -f "$tmp_tgz" 2>/dev/null
+    return 1
 }
 
 print_banner() {
@@ -96,214 +135,92 @@ random_wait_seconds() {
     else echo $(( RANDOM % max + 1 )); fi
 }
 
-# ── CDN / ookla 工具 ──────────────────────────────────────────────────────────
+# ── librespeed / curl 裸速测速核心 ───────────────────────────────────────────
+# 返回: "upload_mbps|download_mbps|latency_ms|jitter_ms"
+# 失败返回: "0|0|0|0"
 
-ecs_check_cdn() {
-    local o_url="$1"
-    local shuffled
-    if command_exists shuf; then
-        shuffled=($(shuf -e "${cdn_urls[@]}"))
-    else
-        shuffled=("${cdn_urls[@]}")
-    fi
-    for cdn_url in "${shuffled[@]}"; do
-        if curl -sL -k "${cdn_url}${o_url}" --max-time 6 2>/dev/null | grep -q "success"; then
-            cdn_success_url="$cdn_url"; return
+_curl_http_speedtest() {
+    local dl_url="$1" ul_url="$2"
+    local dl_mbps=0 ul_mbps=0 lat_ms=0 jit_ms=0
+
+    # --- 延迟测试 (5次 HTTP ping) ---
+    local lat_sum=0 lat_sq=0 lat_cnt=0 lat_t
+    for _i in 1 2 3 4 5; do
+        lat_t=$(curl -o /dev/null -s -w "%{time_total}" --max-time 5 \
+            "${dl_url%garbage.php}empty.php" 2>/dev/null || echo "0")
+        if [[ "$lat_t" != "0" && -n "$lat_t" ]]; then
+            local lat_ms_i; lat_ms_i=$(awk "BEGIN{printf \"%.2f\", $lat_t*1000}")
+            lat_sum=$(awk "BEGIN{printf \"%.2f\", $lat_sum + $lat_ms_i}")
+            lat_sq=$(awk  "BEGIN{printf \"%.2f\", $lat_sq + $lat_ms_i*$lat_ms_i}")
+            lat_cnt=$((lat_cnt+1))
         fi
-        sleep 0.5
     done
-    cdn_success_url=""
-}
-
-ecs_check_cdn_file() {
-    [ -n "$cdn_success_url" ] && return
-    ecs_check_cdn "https://raw.githubusercontent.com/spiritLHLS/ecs/main/back/test"
-    if [ -n "$cdn_success_url" ]; then
-        echo -e "${CYAN}CDN 可用${ENDC}"
-    else
-        echo -e "${YELLOW}CDN 不可用，直连 GitHub${ENDC}"
-    fi
-}
-
-ecs_install_speedtest() {
-    [ -f "${ECS_CLI_DIR}/speedtest" ] || [ -f "${ECS_CLI_DIR}/speedtest-go" ] && return 0
-    local sysarch; sysarch=$(uname -m)
-    local sys_bit
-    case "${sysarch}" in
-        x86_64|x86|amd64|x64) sys_bit="x86_64" ;;
-        i386|i686)             sys_bit="i386" ;;
-        aarch64|armv7l|armv8|armv8l) sys_bit="aarch64" ;;
-        s390x)   sys_bit="s390x"   ;;
-        riscv64) sys_bit="riscv64" ;;
-        ppc64le) sys_bit="ppc64le" ;;
-        ppc64)   sys_bit="ppc64"   ;;
-        *)       sys_bit="x86_64"  ;;
-    esac
-    mkdir -p "${ECS_CLI_DIR}"
-    cd /root || return 1
-    echo -e "${CYAN}下载 speedtest 工具 (${sys_bit})...${ENDC}"
-    local installed=0
-    # 优先安装 speedtest-go（无需许可证，后台更稳定）
-    local go_bit="$sys_bit"; [ "$go_bit" = "aarch64" ] && go_bit="arm64"
-    local url_go="https://github.com/showwin/speedtest-go/releases/download/v${Speedtest_Go_version}/speedtest-go_${Speedtest_Go_version}_Linux_${go_bit}.tar.gz"
-    curl --fail -sL -m 30 -o /root/speedtest.tar.gz "${url_go}" 2>/dev/null
-    if [ -f "/root/speedtest.tar.gz" ] && tar -tzf /root/speedtest.tar.gz >/dev/null 2>&1; then
-        tar -zxf /root/speedtest.tar.gz -C "${ECS_CLI_DIR}" 2>/dev/null
-        rm -f /root/speedtest.tar.gz
-        [ -f "${ECS_CLI_DIR}/speedtest-go" ] && chmod 777 "${ECS_CLI_DIR}/speedtest-go" && installed=1
-    fi
-    if (( installed == 0 )); then
-        # fallback: ookla 官方 CLI
-        local url1="https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-${sys_bit}.tgz"
-        local url2="https://dl.lamp.sh/files/ookla-speedtest-1.2.0-linux-${sys_bit}.tgz"
-        curl --fail -sL -m 20 -o /root/speedtest.tgz "${url1}" 2>/dev/null || \
-            curl --fail -sL -m 20 -o /root/speedtest.tgz "${url2}" 2>/dev/null
-        if [ -f "/root/speedtest.tgz" ]; then
-            tar -zxf /root/speedtest.tgz -C "${ECS_CLI_DIR}" 2>/dev/null
-            rm -f /root/speedtest.tgz
-            if [ -f "${ECS_CLI_DIR}/speedtest" ]; then
-                chmod 777 "${ECS_CLI_DIR}/speedtest"
-                installed=1
-                # 预先接受许可证，避免后台运行时交互提示
-                echo -e "${CYAN}预接受 ookla 许可证...${ENDC}"
-                "${ECS_CLI_DIR}/speedtest" --accept-license --accept-gdpr --progress=no \
-                    </dev/null >/dev/null 2>&1 || true
-            fi
-        fi
-    fi
-    if (( installed == 0 )); then
-        echo -e "${RED}speedtest 工具安装失败${ENDC}"; return 1
-    fi
-    echo -e "${GREEN}speedtest 工具安装完成${ENDC}"; return 0
-}
-
-# ── ookla 统一测速函数（前台+后台 worker 共用逻辑）──────────────────────────
-# 返回: "upload|download|latency|pkt_loss"  失败时返回 "0|0|0|NULL"
-_ookla_run_test() {
-    local server_id="$1"
-    local log_f="${ECS_CLI_DIR}/speedtest_run.log"
-    local upload="" download="" latency="" pkt_loss=""
-
-    # 优先使用 speedtest-go（更稳定，无许可证问题）
-    if [ -f "${ECS_CLI_DIR}/speedtest-go" ]; then
-        local args_go=(--ua="${BrowserUA}")
-        [ -n "$server_id" ] && args_go+=(--server="$server_id")
-        "${ECS_CLI_DIR}/speedtest-go" "${args_go[@]}" </dev/null >"$log_f" 2>&1
-        upload=$(grep -oP 'Upload:\s+\K[\d.]+' "$log_f" | head -1)
-        download=$(grep -oP 'Download:\s+\K[\d.]+' "$log_f" | head -1)
-        latency=$(grep -oP 'Latency:\s+\K[\d.]+' "$log_f" | head -1)
-        pkt_loss="NULL"
-        # speedtest-go 指定 server 失败则重试不指定
-        if [[ -z "$upload" || "$upload" == "0" ]] && [ -n "$server_id" ]; then
-            "${ECS_CLI_DIR}/speedtest-go" --ua="${BrowserUA}" </dev/null >"$log_f" 2>&1
-            upload=$(grep -oP 'Upload:\s+\K[\d.]+' "$log_f" | head -1)
-            download=$(grep -oP 'Download:\s+\K[\d.]+' "$log_f" | head -1)
-            latency=$(grep -oP 'Latency:\s+\K[\d.]+' "$log_f" | head -1)
-        fi
-    elif [ -f "${ECS_CLI_DIR}/speedtest" ]; then
-        local args_ok=(--progress=no --accept-license --accept-gdpr --format=human-readable)
-        [ -n "$server_id" ] && args_ok+=(-s "$server_id")
-        # </dev/null 解决后台无 TTY 时卡住问题；不判断退出码，直接解析输出
-        "${ECS_CLI_DIR}/speedtest" "${args_ok[@]}" </dev/null >"$log_f" 2>&1
-        upload=$(grep -oP '(?:Upload|upload):\s+\K[\d.]+' "$log_f" | head -1)
-        download=$(grep -oP '(?:Download|download):\s+\K[\d.]+' "$log_f" | head -1)
-        latency=$(grep -oP '(?:Idle )?Latency:\s+\K[\d.]+' "$log_f" | head -1)
-        pkt_loss=$(awk -F':\s*' '/Packet Loss/{v=$2; gsub(/[[:space:]%]/,"",v); print (v==""||v=="Notavailable.")?"NULL":v"%"}' "$log_f")
-        # ookla 指定 server 失败则重试不指定
-        if [[ -z "$upload" || "$upload" == "0" ]] && [ -n "$server_id" ]; then
-            "${ECS_CLI_DIR}/speedtest" --progress=no --accept-license --accept-gdpr \
-                --format=human-readable </dev/null >"$log_f" 2>&1
-            upload=$(grep -oP '(?:Upload|upload):\s+\K[\d.]+' "$log_f" | head -1)
-            download=$(grep -oP '(?:Download|download):\s+\K[\d.]+' "$log_f" | head -1)
-            latency=$(grep -oP '(?:Idle )?Latency:\s+\K[\d.]+' "$log_f" | head -1)
+    if (( lat_cnt > 0 )); then
+        lat_ms=$(awk "BEGIN{printf \"%.1f\", $lat_sum/$lat_cnt}")
+        if (( lat_cnt > 1 )); then
+            jit_ms=$(awk "BEGIN{v=($lat_sq/$lat_cnt)-($lat_sum/$lat_cnt)^2; if(v<0)v=0; printf \"%.1f\",sqrt(v)}")
         fi
     fi
 
-    upload="${upload:-0}"; download="${download:-0}"
-    latency="${latency:-0}"; pkt_loss="${pkt_loss:-NULL}"
-    echo "${upload}|${download}|${latency}|${pkt_loss}"
+    # --- 下载测试 (拉取 ~50MB 垃圾数据) ---
+    local dl_result
+    dl_result=$(curl -o /dev/null -s -w "%{time_total},%{size_download}" \
+        --max-time 20 "${dl_url}?ckSize=50" 2>/dev/null)
+    if [[ -n "$dl_result" ]]; then
+        local dl_time dl_bytes
+        dl_time=$(echo "$dl_result" | cut -d',' -f1)
+        dl_bytes=$(echo "$dl_result" | cut -d',' -f2)
+        if awk "BEGIN{exit !($dl_time>0 && $dl_bytes>0)}"; then
+            dl_mbps=$(awk "BEGIN{printf \"%.2f\", ($dl_bytes*8)/($dl_time*1000000)}")
+        fi
+    fi
+
+    # --- 上传测试 (POST ~20MB 数据) ---
+    local ul_result
+    ul_result=$(dd if=/dev/urandom bs=1M count=20 2>/dev/null | \
+        curl -o /dev/null -s -w "%{time_total},%{size_upload}" \
+        --max-time 20 -X POST -H "Content-Type: application/octet-stream" \
+        --data-binary @- "$ul_url" 2>/dev/null)
+    if [[ -n "$ul_result" ]]; then
+        local ul_time ul_bytes
+        ul_time=$(echo "$ul_result" | cut -d',' -f1)
+        ul_bytes=$(echo "$ul_result" | cut -d',' -f2)
+        if awk "BEGIN{exit !($ul_time>0 && $ul_bytes>0)}"; then
+            ul_mbps=$(awk "BEGIN{printf \"%.2f\", ($ul_bytes*8)/($ul_time*1000000)}")
+        fi
+    fi
+
+    echo "${ul_mbps}|${dl_mbps}|${lat_ms}|${jit_ms}"
 }
 
-ecs_get_data() {
-    local url="$1"; local data=(); local response; local retries=0
-    while (( retries < 3 )); do
-        response=$(curl -sL --max-time 5 "$url" 2>/dev/null) && break
-        retries=$((retries+1)); sleep 1
-    done
-    (( retries >= 3 )) && [ -n "$cdn_success_url" ] && \
-        response=$(curl -sL --max-time 8 "${cdn_success_url}${url}" 2>/dev/null)
-    while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        local id; id=$(echo "$line" | awk -F',' '{print $1}')
-        local city; city=$(echo "$line" | sed 's/ //g' | awk -F',' '{print $4}')
-        [[ "$id,$city" == "id,city" ]] && continue
-        [[ "$url" == *"Mobile"*  ]] && city="移动${city}"
-        [[ "$url" == *"Telecom"* ]] && city="电信${city}"
-        [[ "$url" == *"Unicom"*  ]] && city="联通${city}"
-        data+=("$id,$city")
-    done <<< "$response"
-    echo "${data[@]}"
-}
-
-ecs_ping_test() {
-    local ip="$1"
-    local result; result=$(ping -c1 -W3 "$ip" 2>/dev/null | awk -F'/' 'END{print $5}')
-    echo "$ip,$result"
-}
-
-ecs_get_nearest_data() {
-    local url="$1"; local data=(); local response; local retries=0
-    while (( retries < 2 )); do
-        response=$(curl -sL --max-time 4 "$url" 2>/dev/null) && break
-        retries=$((retries+1)); sleep 1
-    done
-    [ -z "$response" ] && [ -n "$cdn_success_url" ] && \
-        response=$(curl -sL --max-time 8 "${cdn_success_url}${url}" 2>/dev/null)
-    while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        local id; id=$(echo "$line" | awk -F',' '{print $1}')
-        local city; city=$(echo "$line" | sed 's/ //g' | awk -F',' '{print $4}')
-        local ip; ip=$(echo "$line" | awk -F',' '{print $5}')
-        [[ "$id,$city,$ip" == "id,city,ip" ]] && continue
-        [[ "$url" == *"Mobile"*  ]] && city="移动${city}"
-        [[ "$url" == *"Telecom"* ]] && city="电信${city}"
-        [[ "$url" == *"Unicom"*  ]] && city="联通${city}"
-        data+=("$id,$city,$ip")
-    done <<< "$response"
-    [ ${#data[@]} -eq 0 ] && return 1
-    local pingname; pingname=$(basename "$url" | cut -d'.' -f1)
-    local tmp_dir; tmp_dir=$(mktemp -d)
-    for ((i=0;i<${#data[@]};i++)); do
-        { local ip2; ip2=$(echo "${data[$i]}" | awk -F',' '{print $3}')
-          ecs_ping_test "$ip2" > "$tmp_dir/$i"; } &
-    done
-    wait
-    local tmp_file="/tmp/pingtest_hs_${pingname}"
-    rm -f "$tmp_file"
-    for idx in $(seq 0 $((${#data[@]}-1))); do cat "$tmp_dir/$idx" 2>/dev/null; done > "$tmp_file"
-    rm -rf "$tmp_dir"
-    local sorted; sorted=$(awk -F',' 'NF>=2 && $2!=""' "$tmp_file" | sort -t',' -k2 -n)
-    rm -f "$tmp_file"
-    local lines=(); IFS=$'\n' read -rd '' -a lines <<< "$sorted"
-    local results=()
-    for line in "${lines[@]}"; do
-        local field; field=$(echo "$line" | cut -d',' -f1)
-        [[ -n "$field" ]] && results+=("$field")
-    done
-    local sorted_data=()
-    for result in "${results[@]}"; do
-        for item in "${data[@]}"; do
-            [[ "$(echo "$item" | cut -d',' -f3)" == "$result" ]] && \
-                sorted_data+=("$(echo "$item"|cut -d',' -f1),$(echo "$item"|cut -d',' -f2)")
-        done
-    done
-    echo "${sorted_data[0]:-}"
+_librespeed_test() {
+    local dl_url="$1" ul_url="$2"
+    # 构建临时 server JSON
+    local srv_base; srv_base="${dl_url%/garbage.php}"
+    local tmp_json; tmp_json=$(mktemp /tmp/ls_srv_XXXXXX.json)
+    printf '[{"id":1,"name":"test","server":"%s/","dlURL":"garbage.php","ulURL":"empty.php","pingURL":"empty.php","getIpURL":"getIP.php"}]\n' \
+        "$srv_base" > "$tmp_json"
+    local output
+    output=$("$LIBRESPEED_BIN" --local-json "$tmp_json" --no-icmp \
+        --concurrent 4 --bytes --json 2>/dev/null)
+    rm -f "$tmp_json"
+    local ul dl lat jit
+    ul=$(echo  "$output" | grep -oP '"upload":\s*\K[\d.]+' | head -1)
+    dl=$(echo  "$output" | grep -oP '"download":\s*\K[\d.]+' | head -1)
+    lat=$(echo "$output" | grep -oP '"latency":\s*\K[\d.]+' | head -1)
+    jit=$(echo "$output" | grep -oP '"jitter":\s*\K[\d.]+' | head -1)
+    # librespeed-cli --bytes 输出单位 Bytes/s → 转 Mbps
+    if [[ -n "$ul" && "$ul" != "0" ]]; then
+        ul=$(awk "BEGIN{printf \"%.2f\", $ul*8/1000000}")
+        dl=$(awk "BEGIN{printf \"%.2f\", $dl*8/1000000}")
+    fi
+    echo "${ul:-0}|${dl:-0}|${lat:-0}|${jit:-0}"
 }
 
 # ── 参数配置 ──────────────────────────────────────────────────────────────────
 
 get_thread_option() {
-    read -r -p "启用八线程测速? [y/N]: " ans
+    read -r -p "启用八线程测速(仅对bimc节点有效)? [y/N]: " ans
     [[ "$ans" =~ ^[Yy]$ ]] && THREAD_FLAG='-m' || THREAD_FLAG=''
 }
 
@@ -332,19 +249,22 @@ get_duration_option() {
 
 show_nodes() {
     echo
-    echo "可选测试地区/节点 (bimc 高精度节点):"
+    echo "可选测试节点:"
     local i entry tool group location isp
     for i in "${!NODES[@]}"; do
         entry="${NODES[$i]}"
-        IFS='|' read -r tool group location isp _ _ _ <<< "$entry"
-        printf '  %02d. [%-5s] %-12s %-14s (%s)\n' "$((i+1))" "$tool" "$group" "$location" "$isp"
+        IFS='|' read -r tool group location isp _ _ <<< "$entry"
+        local tool_label
+        case "$tool" in
+            bimc)  tool_label="bimc " ;;
+            libre) tool_label="libre" ;;
+            curl)  tool_label="curl " ;;
+            *)     tool_label="$tool " ;;
+        esac
+        printf '  %02d. [%-5s] %-12s %-16s (%s)\n' "$((i+1))" "$tool_label" "$group" "$location" "$isp"
     done
     echo
-    echo "  --- 动态加载最优单节点 (ookla, 延迟最低1个) ---"
-    echo "  a.联通  b.电信  c.移动  d.香港  e.台湾  f.日本  g.新加坡"
-    echo "  n.三网就近(联通+电信+移动 各1个)"
-    echo
-    echo "输入示例: 1,2,a,b  |  all=全选(bimc+ookla各1)  |  ecs=三网就近各1"
+    echo "  all=全选  1,2,3=bimc高精度  6,7,8,9,10=librespeed国内三网"
 }
 
 select_nodes() {
@@ -352,108 +272,45 @@ select_nodes() {
     SELECTED_IDS=()
     show_nodes
 
-    _load_best_one() {
-        local url="$1" gname="$2"
-        echo -e "${CYAN}正在探测 ${gname} 最优节点...${ENDC}"
-        local best
-        best=$(ecs_get_nearest_data "$url")
-        if [ -z "$best" ]; then
-            echo -e "${YELLOW}${gname} ping 探测失败，改用列表第一个节点${ENDC}"
-            local all_list=()
-            all_list=($(ecs_get_data "$url"))
-            best="${all_list[0]:-}"
-        fi
-        if [ -z "$best" ]; then
-            echo -e "${YELLOW}${gname} 节点拉取失败，跳过${ENDC}"; return
-        fi
-        local sid; sid=$(echo "$best" | cut -d',' -f1)
-        local loc; loc=$(echo "$best" | cut -d',' -f2)
-        NODES+=("ookla|${gname}|${loc}|speedtest|${sid}||")
-        SELECTED_IDS+=("${#NODES[@]}")
-        echo -e "${GREEN}  ✓ ${gname}: ${loc} (ID:${sid})${ENDC}"
-    }
-
-    _dispatch_letter() {
-        case "$1" in
-            a) _load_best_one "${SERVER_BASE_URL}/CN_Unicom.csv"  "联通" ;;
-            b) _load_best_one "${SERVER_BASE_URL}/CN_Telecom.csv" "电信" ;;
-            c) _load_best_one "${SERVER_BASE_URL}/CN_Mobile.csv"  "移动" ;;
-            d) _load_best_one "${SERVER_BASE_URL}/HK.csv"         "香港" ;;
-            e) _load_best_one "${SERVER_BASE_URL}/TW.csv"         "台湾" ;;
-            f) _load_best_one "${SERVER_BASE_URL}/JP.csv"         "日本" ;;
-            g) _load_best_one "${SERVER_BASE_URL}/SG.csv"         "新加坡" ;;
-            n) _load_best_one "${SERVER_BASE_URL}/CN_Unicom.csv"  "联通"
-               _load_best_one "${SERVER_BASE_URL}/CN_Telecom.csv" "电信"
-               _load_best_one "${SERVER_BASE_URL}/CN_Mobile.csv"  "移动" ;;
-            *) echo -e "${RED}未知字母: $1${ENDC}" ;;
-        esac
-    }
-
     while true; do
         read -r -p "请选择测试节点: " input
         input="${input// /}"
 
         if [[ -z "$input" || "$input" == "all" ]]; then
             for token in "${!NODES[@]}"; do SELECTED_IDS+=("$((token+1))"); done
-            ecs_check_cdn_file
-            for _al in a b c d e f g; do _dispatch_letter "$_al"; done
             break
-        fi
-
-        if [[ "$input" == "ecs" ]]; then
-            ecs_check_cdn_file
-            _dispatch_letter "n"
-            [ ${#SELECTED_IDS[@]} -gt 0 ] && break
-            echo -e "${RED}节点加载失败，请重试${ENDC}"; continue
         fi
 
         IFS=',' read -r -a TOKENS <<< "$input"
         local valid=1
         for token in "${TOKENS[@]}"; do
-            [[ -n "$token" ]] || { valid=0; break; }
-            if [[ "$token" =~ ^[0-9]+$ ]]; then
-                local tn=$((10#$token))
-                (( tn < 1 || tn > ${#NODES[@]} )) && { valid=0; break; }
-            elif [[ "$token" =~ ^[abcdefgn]$ ]]; then
-                :
-            else
-                valid=0; break
-            fi
+            [[ "$token" =~ ^[0-9]+$ ]] || { valid=0; break; }
+            local tn=$((10#$token))
+            (( tn < 1 || tn > ${#NODES[@]} )) && { valid=0; break; }
         done
         if (( valid == 0 )); then
-            echo -e "${RED}输入无效，请重新输入（数字=bimc 字母=ookla最优节点）${ENDC}"; continue
+            echo -e "${RED}输入无效，请输入编号（如 1,2,6,7）或 all${ENDC}"; continue
         fi
-
-        local cdn_checked=0
-        local letter_done=()
         for token in "${TOKENS[@]}"; do
-            [[ "$token" =~ ^[abcdefgn]$ ]] || continue
-            array_contains "$token" "${letter_done[@]}" && continue
-            (( cdn_checked == 0 )) && { ecs_check_cdn_file; cdn_checked=1; }
-            _dispatch_letter "$token"
-            letter_done+=("$token")
-        done
-        for token in "${TOKENS[@]}"; do
-            [[ "$token" =~ ^[0-9]+$ ]] || continue
             local tn=$((10#$token))
             array_contains "$tn" "${SELECTED_IDS[@]}" || SELECTED_IDS+=("$tn")
         done
-
         [ ${#SELECTED_IDS[@]} -gt 0 ] && break
         echo -e "${RED}未选择任何节点，请重新输入${ENDC}"
     done
 
-    local has_ookla=0
+    # 如有 libre 节点，确保工具已安装
+    local has_libre=0
     for id in "${SELECTED_IDS[@]}"; do
-        [[ "${NODES[$((id-1))]}" == ookla* ]] && { has_ookla=1; break; }
+        [[ "${NODES[$((id-1))]}" == libre* ]] && { has_libre=1; break; }
     done
-    (( has_ookla == 1 )) && ecs_install_speedtest
+    (( has_libre == 1 )) && prepare_librespeed || true
 
     echo
     echo -e "${PURPLE}━━━━━━━━━━━━━━━━ 已选节点 ━━━━━━━━━━━━━━━━${ENDC}"
     local id entry tool group location
     for id in "${SELECTED_IDS[@]}"; do
-        entry="${NODES[$((id-1))]}"; IFS='|' read -r tool group location _ _ _ _ <<< "$entry"
+        entry="${NODES[$((id-1))]}"; IFS='|' read -r tool group location _ _ _ <<< "$entry"
         echo -e "  ${GREEN}✓${ENDC} [${tool}] ${group} — ${location}"
     done
     echo -e "${PURPLE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${ENDC}"
@@ -500,28 +357,18 @@ is_running() {
 
 run_single_test() {
     local id="$1" round="$2"
-    local entry tool group location isp server_id dl_b64 ul_b64
+    local entry tool group location isp dl_url ul_url
     local upload up_status download down_status latency jitter pkt_loss now screen plain color
 
     entry="${NODES[$((id-1))]}"
-    IFS='|' read -r tool group location isp server_id dl_b64 ul_b64 <<< "$entry"
+    IFS='|' read -r tool group location isp dl_url ul_url <<< "$entry"
     now=$(date '+%F %T')
+    pkt_loss="NULL"
 
-    if [[ "$tool" == "ookla" ]]; then
-        local result
-        result=$(_ookla_run_test "$server_id")
-        IFS='|' read -r upload download latency pkt_loss <<< "$result"
-        jitter="0"
-        if [[ "${upload}" != "0" && "${download}" != "0" ]]; then
-            up_status="正常"; down_status="正常"; color="$GREEN"
-        else
-            up_status="失败"; down_status="失败"; color="$RED"
-        fi
-        screen="${YELLOW}[第${round}轮]${ENDC} ${PURPLE}${group}${ENDC}[ookla]|${GREEN}${location}${ENDC} ${CYAN}↑${upload}Mbps ↓${download}Mbps ↕${latency}ms${ENDC} ${color}丢包:${pkt_loss}${ENDC}"
-        plain="[第${round}轮] ${group}[ookla]|${location} ↑${upload}Mbps ↓${download}Mbps ↕${latency}ms 丢包:${pkt_loss}"
-    else
+    case "$tool" in
+    bimc)
         local dl ul node_name output
-        dl=$(decode_b64 "$dl_b64"); ul=$(decode_b64 "$ul_b64")
+        dl=$(decode_b64 "$dl_url"); ul=$(decode_b64 "$ul_url")
         node_name=$("$BINARY" -n "$location" 2>/dev/null)
         [ -n "$node_name" ] || node_name="$location"
         local cmd=("$BINARY" "$dl" "$ul")
@@ -530,13 +377,34 @@ run_single_test() {
         IFS=',' read -r upload up_status download down_status latency jitter <<< "$output"
         upload="${upload:-0}"; up_status="${up_status:-失败}"
         download="${download:-0}"; down_status="${down_status:-失败}"
-        latency="${latency:-0}"; jitter="${jitter:-0}"; pkt_loss="NULL"
+        latency="${latency:-0}"; jitter="${jitter:-0}"
         location="$node_name"
         color="$GREEN"
         [[ "$up_status" != "正常" || "$down_status" != "正常" ]] && color="$RED"
         screen="${YELLOW}[第${round}轮]${ENDC} ${PURPLE}${group}${ENDC}|${GREEN}${location}${ENDC} ${CYAN}↑${upload}${ENDC} ${color}${up_status}${ENDC} ${CYAN}↓${download}${ENDC} ${color}${down_status}${ENDC} ${CYAN}↕${latency} ϟ${jitter}${ENDC}"
         plain="[第${round}轮] ${group}|${location} ↑${upload} ${up_status} ↓${download} ${down_status} ↕${latency} ϟ${jitter}"
-    fi
+        ;;
+    libre|curl)
+        local result
+        if [[ "$tool" == "libre" && -x "$LIBRESPEED_BIN" ]]; then
+            result=$(_librespeed_test "$dl_url" "$ul_url")
+        else
+            # curl裸速（fallback或直接选curl节点）
+            result=$(_curl_http_speedtest "$dl_url" "$ul_url")
+        fi
+        IFS='|' read -r upload download latency jitter <<< "$result"
+        upload="${upload:-0}"; download="${download:-0}"
+        latency="${latency:-0}"; jitter="${jitter:-0}"
+        local tool_label; [[ "$tool" == "libre" && -x "$LIBRESPEED_BIN" ]] && tool_label="libre" || tool_label="curl"
+        if awk "BEGIN{exit !($upload>0 && $download>0)}"; then
+            up_status="正常"; down_status="正常"; color="$GREEN"
+        else
+            up_status="失败"; down_status="失败"; color="$RED"
+        fi
+        screen="${YELLOW}[第${round}轮]${ENDC} ${PURPLE}${group}${ENDC}[${tool_label}]|${GREEN}${location}${ENDC} ${CYAN}↑${upload}Mbps ↓${download}Mbps ↕${latency}ms ϟ${jitter}ms${ENDC} ${color}${up_status}${ENDC}"
+        plain="[第${round}轮] ${group}[${tool_label}]|${location} ↑${upload}Mbps ↓${download}Mbps ↕${latency}ms ϟ${jitter}ms ${up_status}"
+        ;;
+    esac
 
     log_line "$screen" "$plain"
     printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
@@ -575,13 +443,13 @@ LOG_DIR="${BASE_DIR}/logs"
 WORK_DIR="${BASE_DIR}/tmp"
 REPORT_DIR="${BASE_DIR}/reports"
 RUN_DIR="${BASE_DIR}/run"
+BIN_DIR="${BASE_DIR}/bin"
 BINARY="${WORK_DIR}/bimc"
+LIBRESPEED_BIN="${BIN_DIR}/librespeed-cli"
 PID_FILE="${RUN_DIR}/hyperspeed.pid"
 TASK_FILE="${RUN_DIR}/task.env"
 LAST_LOG_FILE="${RUN_DIR}/last_log_path"
 LAST_CSV_FILE="${RUN_DIR}/last_csv_path"
-ECS_CLI_DIR="/root/speedtest-cli"
-BrowserUA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.74 Safari/537.36"
 mkdir -p "$LOG_DIR" "$WORK_DIR" "$REPORT_DIR" "$RUN_DIR"
 
 [ -f "$TASK_FILE" ] || { echo "task.env not found"; exit 1; }
@@ -606,45 +474,73 @@ prepare_bimc() {
     chmod +x "$BINARY"
 }
 
-_ookla_run_test() {
-    local server_id="$1"
-    local log_f="${ECS_CLI_DIR}/speedtest_run.log"
-    local upload="" download="" latency="" pkt_loss=""
-
-    if [ -f "${ECS_CLI_DIR}/speedtest-go" ]; then
-        local args_go=(--ua="${BrowserUA}")
-        [ -n "$server_id" ] && args_go+=(--server="$server_id")
-        "${ECS_CLI_DIR}/speedtest-go" "${args_go[@]}" </dev/null >"$log_f" 2>&1
-        upload=$(grep -oP 'Upload:\s+\K[\d.]+' "$log_f" | head -1)
-        download=$(grep -oP 'Download:\s+\K[\d.]+' "$log_f" | head -1)
-        latency=$(grep -oP 'Latency:\s+\K[\d.]+' "$log_f" | head -1)
-        pkt_loss="NULL"
-        if [[ -z "$upload" || "$upload" == "0" ]] && [ -n "$server_id" ]; then
-            "${ECS_CLI_DIR}/speedtest-go" --ua="${BrowserUA}" </dev/null >"$log_f" 2>&1
-            upload=$(grep -oP 'Upload:\s+\K[\d.]+' "$log_f" | head -1)
-            download=$(grep -oP 'Download:\s+\K[\d.]+' "$log_f" | head -1)
-            latency=$(grep -oP 'Latency:\s+\K[\d.]+' "$log_f" | head -1)
+_curl_http_speedtest() {
+    local dl_url="$1" ul_url="$2"
+    local dl_mbps=0 ul_mbps=0 lat_ms=0 jit_ms=0
+    local lat_sum=0 lat_sq=0 lat_cnt=0 lat_t
+    for _i in 1 2 3 4 5; do
+        lat_t=$(curl -o /dev/null -s -w "%{time_total}" --max-time 5 \
+            "${dl_url%garbage.php}empty.php" 2>/dev/null || echo "0")
+        if [[ "$lat_t" != "0" && -n "$lat_t" ]]; then
+            local lat_ms_i; lat_ms_i=$(awk "BEGIN{printf \"%.2f\", $lat_t*1000}")
+            lat_sum=$(awk "BEGIN{printf \"%.2f\", $lat_sum + $lat_ms_i}")
+            lat_sq=$(awk  "BEGIN{printf \"%.2f\", $lat_sq + $lat_ms_i*$lat_ms_i}")
+            lat_cnt=$((lat_cnt+1))
         fi
-    elif [ -f "${ECS_CLI_DIR}/speedtest" ]; then
-        local args_ok=(--progress=no --accept-license --accept-gdpr --format=human-readable)
-        [ -n "$server_id" ] && args_ok+=(-s "$server_id")
-        "${ECS_CLI_DIR}/speedtest" "${args_ok[@]}" </dev/null >"$log_f" 2>&1
-        upload=$(grep -oP '(?:Upload|upload):\s+\K[\d.]+' "$log_f" | head -1)
-        download=$(grep -oP '(?:Download|download):\s+\K[\d.]+' "$log_f" | head -1)
-        latency=$(grep -oP '(?:Idle )?Latency:\s+\K[\d.]+' "$log_f" | head -1)
-        pkt_loss=$(awk -F':\s*' '/Packet Loss/{v=$2; gsub(/[[:space:]%]/,"",v); print (v==""||v=="Notavailable.")?"NULL":v"%"}' "$log_f")
-        if [[ -z "$upload" || "$upload" == "0" ]] && [ -n "$server_id" ]; then
-            "${ECS_CLI_DIR}/speedtest" --progress=no --accept-license --accept-gdpr \
-                --format=human-readable </dev/null >"$log_f" 2>&1
-            upload=$(grep -oP '(?:Upload|upload):\s+\K[\d.]+' "$log_f" | head -1)
-            download=$(grep -oP '(?:Download|download):\s+\K[\d.]+' "$log_f" | head -1)
-            latency=$(grep -oP '(?:Idle )?Latency:\s+\K[\d.]+' "$log_f" | head -1)
+    done
+    if (( lat_cnt > 0 )); then
+        lat_ms=$(awk "BEGIN{printf \"%.1f\", $lat_sum/$lat_cnt}")
+        if (( lat_cnt > 1 )); then
+            jit_ms=$(awk "BEGIN{v=($lat_sq/$lat_cnt)-($lat_sum/$lat_cnt)^2; if(v<0)v=0; printf \"%.1f\",sqrt(v)}")
         fi
     fi
+    local dl_result
+    dl_result=$(curl -o /dev/null -s -w "%{time_total},%{size_download}" \
+        --max-time 20 "${dl_url}?ckSize=50" 2>/dev/null)
+    if [[ -n "$dl_result" ]]; then
+        local dl_time dl_bytes
+        dl_time=$(echo "$dl_result" | cut -d',' -f1)
+        dl_bytes=$(echo "$dl_result" | cut -d',' -f2)
+        if awk "BEGIN{exit !($dl_time>0 && $dl_bytes>0)}"; then
+            dl_mbps=$(awk "BEGIN{printf \"%.2f\", ($dl_bytes*8)/($dl_time*1000000)}")
+        fi
+    fi
+    local ul_result
+    ul_result=$(dd if=/dev/urandom bs=1M count=20 2>/dev/null | \
+        curl -o /dev/null -s -w "%{time_total},%{size_upload}" \
+        --max-time 20 -X POST -H "Content-Type: application/octet-stream" \
+        --data-binary @- "$ul_url" 2>/dev/null)
+    if [[ -n "$ul_result" ]]; then
+        local ul_time ul_bytes
+        ul_time=$(echo "$ul_result" | cut -d',' -f1)
+        ul_bytes=$(echo "$ul_result" | cut -d',' -f2)
+        if awk "BEGIN{exit !($ul_time>0 && $ul_bytes>0)}"; then
+            ul_mbps=$(awk "BEGIN{printf \"%.2f\", ($ul_bytes*8)/($ul_time*1000000)}")
+        fi
+    fi
+    echo "${ul_mbps}|${dl_mbps}|${lat_ms}|${jit_ms}"
+}
 
-    upload="${upload:-0}"; download="${download:-0}"
-    latency="${latency:-0}"; pkt_loss="${pkt_loss:-NULL}"
-    echo "${upload}|${download}|${latency}|${pkt_loss}"
+_librespeed_test() {
+    local dl_url="$1" ul_url="$2"
+    local srv_base; srv_base="${dl_url%/garbage.php}"
+    local tmp_json; tmp_json=$(mktemp /tmp/ls_srv_XXXXXX.json)
+    printf '[{"id":1,"name":"test","server":"%s/","dlURL":"garbage.php","ulURL":"empty.php","pingURL":"empty.php","getIpURL":"getIP.php"}]\n' \
+        "$srv_base" > "$tmp_json"
+    local output
+    output=$("$LIBRESPEED_BIN" --local-json "$tmp_json" --no-icmp \
+        --concurrent 4 --bytes --json 2>/dev/null)
+    rm -f "$tmp_json"
+    local ul dl lat jit
+    ul=$(echo  "$output" | grep -oP '"upload":\s*\K[\d.]+' | head -1)
+    dl=$(echo  "$output" | grep -oP '"download":\s*\K[\d.]+' | head -1)
+    lat=$(echo "$output" | grep -oP '"latency":\s*\K[\d.]+' | head -1)
+    jit=$(echo "$output" | grep -oP '"jitter":\s*\K[\d.]+' | head -1)
+    if [[ -n "$ul" && "$ul" != "0" ]]; then
+        ul=$(awk "BEGIN{printf \"%.2f\", $ul*8/1000000}")
+        dl=$(awk "BEGIN{printf \"%.2f\", $dl*8/1000000}")
+    fi
+    echo "${ul:-0}|${dl:-0}|${lat:-0}|${jit:-0}"
 }
 
 new_log_files() {
@@ -660,27 +556,18 @@ log_line() { printf '%b\n' "$1"; printf '%b\n' "$2" >> "$LOG_FILE"; }
 
 run_single_test() {
     local id="$1" round="$2"
-    local entry tool group location isp server_id dl_b64 ul_b64
+    local entry tool group location isp dl_url ul_url
     local upload up_status download down_status latency jitter pkt_loss now plain
 
     entry="${NODES[$((id-1))]}"
-    IFS='|' read -r tool group location isp server_id dl_b64 ul_b64 <<< "$entry"
+    IFS='|' read -r tool group location isp dl_url ul_url <<< "$entry"
     now=$(date '+%F %T')
+    pkt_loss="NULL"
 
-    if [[ "$tool" == "ookla" ]]; then
-        local result
-        result=$(_ookla_run_test "$server_id")
-        IFS='|' read -r upload download latency pkt_loss <<< "$result"
-        jitter="0"
-        if [[ "${upload}" != "0" && "${download}" != "0" ]]; then
-            up_status="正常"; down_status="正常"
-        else
-            up_status="失败"; down_status="失败"
-        fi
-        plain="[第${round}轮] ${group}[ookla]|${location} ↑${upload}Mbps ↓${download}Mbps ↕${latency}ms 丢包:${pkt_loss}"
-    else
+    case "$tool" in
+    bimc)
         local dl ul node_name output
-        dl=$(decode_b64 "$dl_b64"); ul=$(decode_b64 "$ul_b64")
+        dl=$(decode_b64 "$dl_url"); ul=$(decode_b64 "$ul_url")
         node_name=$("$BINARY" -n "$location" 2>/dev/null)
         [ -n "$node_name" ] || node_name="$location"
         local cmd=("$BINARY" "$dl" "$ul")
@@ -689,10 +576,29 @@ run_single_test() {
         IFS=',' read -r upload up_status download down_status latency jitter <<< "$output"
         upload="${upload:-0}"; up_status="${up_status:-失败}"
         download="${download:-0}"; down_status="${down_status:-失败}"
-        latency="${latency:-0}"; jitter="${jitter:-0}"; pkt_loss="NULL"
+        latency="${latency:-0}"; jitter="${jitter:-0}"
         location="$node_name"
         plain="[第${round}轮] ${group}|${location} ↑${upload} ${up_status} ↓${download} ${down_status} ↕${latency} ϟ${jitter}"
-    fi
+        ;;
+    libre|curl)
+        local result
+        if [[ "$tool" == "libre" && -x "$LIBRESPEED_BIN" ]]; then
+            result=$(_librespeed_test "$dl_url" "$ul_url")
+        else
+            result=$(_curl_http_speedtest "$dl_url" "$ul_url")
+        fi
+        IFS='|' read -r upload download latency jitter <<< "$result"
+        upload="${upload:-0}"; download="${download:-0}"
+        latency="${latency:-0}"; jitter="${jitter:-0}"
+        local tool_label; [[ "$tool" == "libre" && -x "$LIBRESPEED_BIN" ]] && tool_label="libre" || tool_label="curl"
+        if awk "BEGIN{exit !($upload>0 && $download>0)}"; then
+            up_status="正常"; down_status="正常"
+        else
+            up_status="失败"; down_status="失败"
+        fi
+        plain="[第${round}轮] ${group}[${tool_label}]|${location} ↑${upload}Mbps ↓${download}Mbps ↕${latency}ms ϟ${jitter}ms ${up_status}"
+        ;;
+    esac
 
     log_line "$plain" "$plain"
     printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
@@ -1030,57 +936,6 @@ upload_latest_report() {
     echo -e "${GREEN}上传完成:${ENDC} $result"
 }
 
-# ── 选项12：独立单次三网测速 ──────────────────────────────────────────────────
-
-_ecs_run_list() {
-    for item in "$@"; do
-        local sid; sid=$(echo "$item" | cut -d',' -f1)
-        local name; name=$(echo "$item" | cut -d',' -f2)
-        local result
-        result=$(_ookla_run_test "$sid")
-        local ul dl lat pkt
-        IFS='|' read -r ul dl lat pkt <<< "$result"
-        printf '%-20s ↑%-12s ↓%-12s ↕%-10s 丢包:%s\n' \
-            "$name" "${ul}Mbps" "${dl}Mbps" "${lat}ms" "$pkt"
-    done
-}
-
-run_ecsspeed_test() {
-    ecs_check_cdn_file
-    ecs_install_speedtest || { echo -e "${RED}speedtest 工具安装失败${ENDC}"; return 1; }
-    echo
-    echo "  三网/国际 speedtest.net 节点测速"
-    echo "——————————————————————————————————————————————————————————————————————————————"
-    echo -e "  ${GREEN}1.${ENDC} 三网就近    ${GREEN}2.${ENDC} 三网全测    ${GREEN}3.${ENDC} 联通    ${GREEN}4.${ENDC} 电信"
-    echo -e "  ${GREEN}5.${ENDC} 移动        ${GREEN}6.${ENDC} 香港        ${GREEN}7.${ENDC} 台湾    ${GREEN}8.${ENDC} 日本    ${GREEN}9.${ENDC} 新加坡"
-    echo -e "  ${GREEN}0.${ENDC} 返回主菜单"
-    echo "——————————————————————————————————————————————————————————————————————————————"
-    local sel
-    while true; do read -r -p "请选择: " sel; [[ "$sel" =~ ^[0-9]$ ]] && break; echo -e "${RED}无效${ENDC}"; done
-    [[ "$sel" == "0" ]] && return
-    echo "——————————————————————————————————————————————————————————————————————————————"
-    printf '%-20s %-14s %-14s %-12s %s\n' "位置" "上传" "下载" "延迟" "丢包率"
-    local ts; ts=$(date +%s)
-    case "$sel" in
-        1) _ecs_run_list $(ecs_get_nearest_data "${SERVER_BASE_URL}/CN_Unicom.csv")
-           _ecs_run_list $(ecs_get_nearest_data "${SERVER_BASE_URL}/CN_Telecom.csv")
-           _ecs_run_list $(ecs_get_nearest_data "${SERVER_BASE_URL}/CN_Mobile.csv") ;;
-        2) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/CN_Unicom.csv")
-           _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/CN_Telecom.csv")
-           _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/CN_Mobile.csv") ;;
-        3) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/CN_Unicom.csv")  ;;
-        4) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/CN_Telecom.csv") ;;
-        5) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/CN_Mobile.csv")  ;;
-        6) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/HK.csv")         ;;
-        7) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/TW.csv")         ;;
-        8) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/JP.csv")         ;;
-        9) _ecs_run_list $(ecs_get_data "${SERVER_BASE_URL}/SG.csv")         ;;
-    esac
-    local te; te=$(date +%s)
-    echo "——————————————————————————————————————————————————————————————————————————————"
-    echo " 总共花费: $(( te - ts )) 秒 | $(date)"
-}
-
 main_menu() {
     while true; do
         print_banner
@@ -1095,7 +950,6 @@ main_menu() {
         echo "9. 选择CSV做分析并生成曲线"
         echo "10. 报告文件列表"
         echo "11. 上传最新报告并生成下载链接"
-        echo "12. 三网/国际 speedtest.net 测速（单次）"
         echo "0. 退出"
         echo
         read -r -p "请选择: " menu
@@ -1111,7 +965,6 @@ main_menu() {
             9)  analyze_csv_by_menu; pause_screen ;;
             10) list_reports; pause_screen ;;
             11) upload_latest_report; pause_screen ;;
-            12) run_ecsspeed_test; pause_screen ;;
             0)  exit 0 ;;
             *)  echo -e "${RED}无效选项${ENDC}"; sleep 1 ;;
         esac
